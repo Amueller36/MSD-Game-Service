@@ -1,8 +1,10 @@
-use crate::planet::resource::Resource;
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+
 use crate::planet::direction::Direction;
+use crate::planet::resource::Resource;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Planet {

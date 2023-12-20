@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
+
 use crate::planet::resource::Resource;
 use crate::robot::robot_level::RobotLevel;
-use crate::robot::robot_level::RobotLevel::LEVEL1;
 
 #[derive(Serialize,Deserialize,Debug)]
 pub struct RobotLevels {

@@ -1,11 +1,13 @@
 services:
   redis:
-    image: redis:7.2-alpine3.19
+    image: eqalpha/keydb:latest
     ports:
       - "6379:6379"
     volumes:
       - redis_data:/data
-    command: redis-server /usr/local/etc/redis/redis.conf
+      - ./redis.conf:/usr/local/etc/redis/redis.conf
+      - ./redis.conf:/etc/keydb/keydb.conf
+    command: keydb-server /usr/local/etc/redis/redis.conf #switch to redis-server for redis
 
 volumes:
   redis_data:

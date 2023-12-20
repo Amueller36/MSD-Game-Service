@@ -1,10 +1,7 @@
-use std::clone;
-use std::sync::Arc;
-use actix_web::{HttpResponse, HttpServer, Responder, web};
-use actix_web::web::{Data, service, to};
+use actix_web::{HttpResponse, HttpServer, Responder};
+use actix_web::web::Data;
 use mobc_redis::RedisConnectionManager;
 use redis::Commands;
-use tokio::sync::Mutex;
 
 mod game;
 mod planet;
@@ -13,6 +10,8 @@ mod robot;
 
 mod trading;
 mod api;
+mod player;
+
 #[actix_web::get("/")]
 async fn hello_world() -> impl Responder {
     HttpResponse:: Ok().body("Hello, world!")
@@ -23,13 +22,12 @@ async fn main() -> Result<(),std::io::Error>{
     let client = mobc_redis::redis::Client::open("redis://0.0.0.0:6379").expect("Invalid redis url");
     let pool_manager = RedisConnectionManager::new(client);
     let pool = mobc::Pool::builder().build(pool_manager);
-    let pool_data = Data::new(pool);
+    let pool_as_sharable_data = Data::new(pool);
     HttpServer::new(move || {
         actix_web::App::new()
-            .app_data(Data::clone(&pool_data))
+            .app_data(Data::clone(&pool_as_sharable_data))
             .service(hello_world)
-            .service(api::games::create_game)
-            .service(api::games::delete_games)
+            .configure(api::games::game_routes)
     })
         .bind("0.0.0.0:8080")
         .expect("Failed to bind to port")

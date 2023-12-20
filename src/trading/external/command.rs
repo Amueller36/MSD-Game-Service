@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+
 use crate::trading::external::command_object::CommandObject;
 use crate::trading::external::command_type::CommandType;
 

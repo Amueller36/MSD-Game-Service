@@ -1,9 +1,11 @@
 use std::collections::HashMap;
-use actix_web::web::resource;
+
 use rand::distributions::{Distribution, WeightedIndex};
 use rand::Rng;
+use rayon::prelude::*;
 use tracing::log::info;
 use uuid::Uuid;
+
 use crate::planet::direction::Direction;
 use crate::planet::planet::Planet;
 use crate::planet::resource::Resource;
@@ -74,7 +76,12 @@ The relationship between planets is express as neighbour relation (Direction(Nor
                 }
             }
         }
-        let map_print_as_string = MapGenerator::display_map_with_connections(&planets);
+        let planets_ref_structure: &Vec<Vec<std::option::Option<&Planet>>> = &planets.par_iter()
+            .map(|row| {
+                row.par_iter().map(|planet_opt| planet_opt.as_ref()).collect()
+            })
+            .collect();
+        let map_print_as_string = MapGenerator::display_map_with_connections(planets_ref_structure);
         info!("Map:\n{}", map_print_as_string);
         return planets;
     }
@@ -91,7 +98,7 @@ The relationship between planets is express as neighbour relation (Direction(Nor
         map
     }
 
-    pub fn display_map_with_connections(planets: &Vec<Vec<Option<Planet>>>) -> String {
+    pub fn display_map_with_connections(planets: &Vec<Vec<Option<&Planet>>>) -> String {
         let mut display_string = String::new();
         for y in 0..planets.len() {
             let mut connections_ns = String::new(); // Für vertikale Verbindungen
@@ -139,7 +146,7 @@ The relationship between planets is express as neighbour relation (Direction(Nor
 
 
     // Hilfsfunktionen, um zu prüfen, ob ein Planet östliche bzw. südliche Nachbarn hat
-    fn planet_has_eastern_neighbor(planets: &Vec<Vec<Option<Planet>>>, x: usize, y: usize) -> bool {
+    fn planet_has_eastern_neighbor(planets: &Vec<Vec<Option<&Planet>>>, x: usize, y: usize) -> bool {
         if let Some(planet) = &planets[x][y] {
             if let Some(_) = planet.neighbours.get(&Direction::EAST) {
                 return planets[x + 1][y].is_some();
@@ -148,7 +155,7 @@ The relationship between planets is express as neighbour relation (Direction(Nor
         false
     }
 
-    fn planet_has_southern_neighbor(planets: &Vec<Vec<Option<Planet>>>, x: usize, y: usize) -> bool {
+    fn planet_has_southern_neighbor(planets: &Vec<Vec<Option<&Planet>>>, x: usize, y: usize) -> bool {
         if let Some(planet) = &planets[x][y] {
             if let Some(_) = planet.neighbours.get(&Direction::SOUTH) {
                 return planets[x][y+1].is_some();
@@ -188,10 +195,6 @@ The relationship between planets is express as neighbour relation (Direction(Nor
 #[cfg(test)]
 mod tests {
     use crate::planet::map_generator::MapGenerator;
-    use crate::planet::planet::Planet;
-    use crate::planet::resource::Resource;
-    use std::collections::HashMap;
-    use uuid::Uuid;
 
     #[test]
     fn test_create_map() {
