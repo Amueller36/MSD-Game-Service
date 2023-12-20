@@ -9,12 +9,12 @@ use crate::robot::robot_levels::RobotLevels;
 
 #[derive(Serialize,Deserialize,Debug)]
 pub struct Robot {
-    robot_id: Uuid,
-    health: u32,
-    energy: u32,
-    levels: RobotLevels,
-    planet : Planet,
-    inventory: HashMap<Resource,u32>
+    pub robot_id: Uuid,
+    pub planet_id: Uuid,
+    pub health: u32,
+    pub energy: u32,
+    pub levels: RobotLevels,
+    pub inventory: HashMap<Resource,u32>
 }
 
 impl Robot {

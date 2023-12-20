@@ -15,6 +15,7 @@ use crate::game::game_state::{GameState, GameStatus, RoundState};
 use crate::planet::map_generator::MapGenerator;
 use crate::planet::planet::Planet;
 use crate::player::Player;
+use crate::trading::external::command::Command;
 
 pub fn game_routes(cfg: &mut web::ServiceConfig) {
     cfg.service(create_game)
@@ -32,7 +33,6 @@ pub fn game_routes(cfg: &mut web::ServiceConfig) {
         .service(start_game)
         .service(end_game);
 }
-
 
 
 async fn with_game_lock<F, Fut>(redis_client: &web::Data<Pool<RedisConnectionManager>>, game_id: &String, action: F) -> Option<HttpResponse>
@@ -118,7 +118,7 @@ async fn get_all_games(redis_client: web::Data<Pool<RedisConnectionManager>>) ->
         Err(_) => return HttpResponse::InternalServerError().finish(),
     };
 
-    let mut games_states : Vec<GameState>= Vec::new();
+    let mut games_states: Vec<GameState> = Vec::new();
     while let Some(key) = game_ids.next_item().await {
         let game: String = con2.get(&key).await.expect("Failed to get game");
         let game_state: GameState = serde_json::from_str(game.as_str()).unwrap();
@@ -146,7 +146,7 @@ async fn get_all_created_games(redis_client: web::Data<Pool<RedisConnectionManag
         Err(_) => return HttpResponse::InternalServerError().finish(),
     };
 
-    let mut created_games_states : Vec<GameState>= Vec::new();
+    let mut created_games_states: Vec<GameState> = Vec::new();
     while let Some(key) = game_ids.next_item().await {
         let game: String = con2.get(&key).await.expect("Failed to get game");
         let game_state: GameState = serde_json::from_str(game.as_str()).unwrap();
@@ -159,6 +159,7 @@ async fn get_all_created_games(redis_client: web::Data<Pool<RedisConnectionManag
     }
     HttpResponse::Ok().body(json!({ "games": created_games_states }).to_string())
 }
+
 #[actix_web::get("/games/{game_id}")]
 async fn get_game(path: web::Path<String>, redis_client: web::Data<Pool<RedisConnectionManager>>) -> impl Responder {
     let game_id = path.into_inner();
@@ -235,7 +236,7 @@ async fn join_game(body: web::Json<JoinGameRequestBody>, path: web::Path<String>
                 return Some(HttpResponse::BadRequest().body(format!("Game {} can't be joined because it is currently in status {:?}", &game_id, &game_state.status)));
             }
             game_state.participating_players.push(player.clone());
-            let round_state= game_state.round_states.get_mut(&0).unwrap();
+            let round_state = game_state.round_states.get_mut(&0).unwrap();
             round_state.player_name_player_map.insert(body.player_name.to_string(), player);
             let is_write_successful: bool = con.set(format!("games/{}", &game_id), serde_json::to_string(&game_state).unwrap()).await.unwrap_or(false);
             if !is_write_successful {
@@ -254,7 +255,7 @@ async fn join_game(body: web::Json<JoinGameRequestBody>, path: web::Path<String>
 async fn display_map(path: web::Path<String>, redis_client: web::Data<Pool<RedisConnectionManager>>) -> impl Responder {
     let game_id = path.into_inner();
     let mut con = redis_client.get().await.expect("Failed to get Redis connection from pool");
-    let game: String = con.get(format!("games/{}",&game_id)).await.expect(format!("Failed to get game {}", game_id).as_str());
+    let game: String = con.get(format!("games/{}", &game_id)).await.expect(format!("Failed to get game {}", game_id).as_str());
     let game_state: GameState = serde_json::from_str(game.as_str()).unwrap();
     let current_round_status = &game_state.round_states.par_iter().max_by(|a, b| a.0.cmp(&b.0)).unwrap().1;
     let planets = &current_round_status.map.planets;
@@ -269,7 +270,7 @@ async fn display_map(path: web::Path<String>, redis_client: web::Data<Pool<Redis
 async fn display_map_for_round(path: web::Path<(String, u16)>, redis_client: web::Data<Pool<RedisConnectionManager>>) -> impl Responder {
     let (game_id, round_number) = path.into_inner();
     let mut con = redis_client.get().await.expect("Failed to get Redis connection from pool");
-    let game: String = con.get(format!("games/{}",&game_id)).await.expect(format!("Failed to get game {}", game_id).as_str());
+    let game: String = con.get(format!("games/{}", &game_id)).await.expect(format!("Failed to get game {}", game_id).as_str());
     let game_state: GameState = serde_json::from_str(game.as_str()).unwrap();
     let planets = &game_state.round_states[&round_number].map.planets;
     let planets_as_ref: &Vec<Vec<Option<&Planet>>> = &planets.par_iter().map(|row| {
@@ -283,7 +284,7 @@ async fn display_map_for_round(path: web::Path<(String, u16)>, redis_client: web
 async fn display_map_for_player(path: web::Path<(String, String)>, redis_client: web::Data<Pool<RedisConnectionManager>>) -> impl Responder {
     let (game_id, player_name) = path.into_inner();
     let mut con = redis_client.get().await.expect("Failed to get Redis connection from pool");
-    let game: String = con.get(format!("games/{}",&game_id)).await.expect(format!("Failed to get game {}", game_id).as_str());
+    let game: String = con.get(format!("games/{}", &game_id)).await.expect(format!("Failed to get game {}", game_id).as_str());
     let game_state: GameState = serde_json::from_str(game.as_str()).unwrap();
     let latest_round_state = game_state.round_states.par_iter().max_by(|a, b| a.0.cmp(&b.0)).unwrap().1;
     let player_state = &latest_round_state.player_name_player_map.get(&player_name).unwrap();
@@ -308,7 +309,7 @@ async fn display_map_for_player(path: web::Path<(String, String)>, redis_client:
 async fn display_map_for_round_and_player(path: web::Path<(String, u16, String)>, redis_client: web::Data<Pool<RedisConnectionManager>>) -> impl Responder {
     let (game_id, round_number, player_name) = path.into_inner();
     let mut con = redis_client.get().await.expect("Failed to get Redis connection from pool");
-    let game: String = con.get(format!("games/{}",&game_id)).await.expect(format!("Failed to get game {}", game_id).as_str());
+    let game: String = con.get(format!("games/{}", &game_id)).await.expect(format!("Failed to get game {}", game_id).as_str());
     let game_state: GameState = serde_json::from_str(game.as_str()).unwrap();
 
     if !game_state.round_states.contains_key(&round_number) {
@@ -342,13 +343,13 @@ async fn start_game(path: web::Path<String>, redis_client: web::Data<Pool<RedisC
     with_game_lock(&redis_client, &game_id, || async {
         {
             let mut con = redis_client.get().await.expect("Failed to get Redis connection from pool");
-            let game: String = con.get(format!("games/{}",&game_id)).await.expect(format!("Failed to get game {}", game_id).as_str());
+            let game: String = con.get(format!("games/{}", &game_id)).await.expect(format!("Failed to get game {}", game_id).as_str());
             let mut game_state: GameState = serde_json::from_str(game.as_str()).unwrap();
             if game_state.status != GameStatus::Created {
                 return Some(HttpResponse::BadRequest().body(format!("Game {} can't be started because it is currently in status {:?}", &game_id, &game_state.status)));
             }
             game_state.status = GameStatus::Started;
-            let is_write_successful: bool = con.set(format!("games/{}",&game_id), serde_json::to_string(&game_state).unwrap()).await.unwrap_or(false);
+            let is_write_successful: bool = con.set(format!("games/{}", &game_id), serde_json::to_string(&game_state).unwrap()).await.unwrap_or(false);
             if !is_write_successful {
                 return Some(HttpResponse::InternalServerError().body(format!("Failed to write game {} to Redis", &game_id)));
             }
@@ -366,13 +367,13 @@ async fn end_game(path: web::Path<String>, redis_client: web::Data<Pool<RedisCon
     with_game_lock(&redis_client, &game_id, || async {
         {
             let mut con = redis_client.get().await.expect("Failed to get Redis connection from pool");
-            let game: String = con.get(format!("games/{}",&game_id)).await.expect(format!("Failed to get game {}", game_id).as_str());
+            let game: String = con.get(format!("games/{}", &game_id)).await.expect(format!("Failed to get game {}", game_id).as_str());
             let mut game_state: GameState = serde_json::from_str(game.as_str()).unwrap();
             if game_state.status != GameStatus::Started {
                 return Some(HttpResponse::BadRequest().body(format!("Game {} can't be ended because it is currently in status {:?}", &game_id, &game_state.status)));
             }
             game_state.status = GameStatus::Ended;
-            let is_write_successful: bool = con.set(format!("games/{}",&game_id), serde_json::to_string(&game_state).unwrap()).await.unwrap_or(false);
+            let is_write_successful: bool = con.set(format!("games/{}", &game_id), serde_json::to_string(&game_state).unwrap()).await.unwrap_or(false);
             if !is_write_successful {
                 return Some(HttpResponse::InternalServerError().body(format!("Failed to write game {} to Redis", &game_id)));
             }
@@ -383,3 +384,21 @@ async fn end_game(path: web::Path<String>, redis_client: web::Data<Pool<RedisCon
         }
     }).await.unwrap_or(HttpResponse::NotFound().body(format!("Game {game_id} can't be ended because it was not found.")))
 }
+
+#[actix_web::post("/games/{game_id}/commands")]
+async fn handle_batch_of_commands(body: web::Json<Vec<Command>>, path: web::Path<String>, redis_client: web::Data<Pool<RedisConnectionManager>>) -> impl Responder {
+    /*
+    Commands are executed in the following order:
+    1. Trading
+    2. Moving
+    3. Repairing (Buying a health or energy restore)
+    4. Battleing (only possible when on same planet)
+    5. Mining
+    6. Regenerating
+     */
+    return HttpResponse::Ok().body("Not implemented yet");
+    todo!()
+}
+
+
+
