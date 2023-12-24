@@ -5,13 +5,13 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::planet::planet::Planet;
-use crate::player::Player;
+use crate::player::PlayerState;
 use crate::robot::robot::Robot;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct GameState {
     pub game_id: Uuid,
-    pub participating_players: Vec<Player>,
+    pub participating_players: Vec<PlayerState>,
     pub current_round: u16,
     pub status: GameStatus,
     pub max_rounds: u16,
@@ -28,8 +28,7 @@ pub enum GameStatus {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct RoundState {
     pub round_number: u32,
-    pub player_robot_map: HashMap<String, HashMap<Uuid,Robot>>, // player_name -> robot_id -> robot
-    pub player_name_player_map: HashMap<String, Player>,
+    pub player_name_player_map: HashMap<String, PlayerState>,
     pub map: GameMap,
 }
 
@@ -61,7 +60,7 @@ impl GameMap {
         }
         None
     }
-    
+
     pub fn get_planet(&self, planet_id : &Uuid) -> Option<&Planet> {
         if let Some((x,y)) = self.indices.get(&planet_id) {
             return self.planets[*x][*y].as_ref();
@@ -75,7 +74,6 @@ impl GameState {
     pub fn new(game_id: Uuid, max_rounds: u16, max_players: u8 ,planets: Vec<Vec<Option<Planet>>>) -> GameState {
         let initial_round = RoundState {
             round_number: 0,
-            player_robot_map: HashMap::new(),
             player_name_player_map: HashMap::new(),
             map: GameMap::new(planets),
         };
@@ -94,12 +92,12 @@ impl GameState {
 
     pub fn get_robots_for_current_round(&mut self, player_name: &str) -> Option<&mut HashMap<Uuid,Robot>> {
         if let Some(round_state) = self.round_states.get_mut(&self.current_round) {
-            return round_state.player_robot_map.get_mut(player_name);
+            return Some(&mut round_state.player_name_player_map.get_mut(player_name).expect(&*format!("Player {} does not exist", player_name)).robots);
         }
         None
     }
 
-    pub fn get_player_for_current_round(&mut self, player_name: &str) -> Option<&mut Player> {
+    pub fn get_player_for_current_round(&mut self, player_name: &str) -> Option<&mut PlayerState> {
         if let Some(round_state) = self.round_states.get_mut(&self.current_round) {
             return round_state.player_name_player_map.get_mut(player_name);
         }
@@ -108,7 +106,7 @@ impl GameState {
 
     pub fn get_robots_for_current_round_by_robot_id(&mut self, robot_id: &Uuid) -> Option<&mut HashMap<Uuid,Robot>> {
         if let Some(round_state) = self.round_states.get_mut(&self.current_round) {
-            for robots in round_state.player_robot_map.values_mut() {
+            for robots in round_state.player_name_player_map.values_mut().map(|player| &mut player.robots) {
                 if robots.contains_key(&robot_id) {
                     return Some(robots);
                 }
@@ -119,7 +117,7 @@ impl GameState {
 
     pub fn get_robot_for_current_round_by_robot_id(&mut self, robot_id: &Uuid) -> Option<&mut Robot> {
         if let Some(round_state) = self.round_states.get_mut(&self.current_round) {
-            for robots in round_state.player_robot_map.values_mut() {
+            for robots in round_state.player_name_player_map.values_mut().map(|player| &mut player.robots) {
                 if let Some(robot) = robots.get_mut(&robot_id) {
                     return Some(robot);
                 }
@@ -127,10 +125,20 @@ impl GameState {
         }
         None
     }
-
-    pub fn get_robot_planet_as_mut(&mut self, robot_id: &Uuid) -> Option<&mut Planet> {
+    pub fn get_robot_for_current_round_by_player_id_and_robot_id (&mut self, player_name: &str, robot_id: &Uuid) -> Option<&mut Robot> {
         if let Some(round_state) = self.round_states.get_mut(&self.current_round) {
-            for robots in round_state.player_robot_map.values() {
+            if let Some(player) = round_state.player_name_player_map.get_mut(player_name) {
+                if let Some(robot) = player.robots.get_mut(&robot_id) {
+                    return Some(robot);
+                }
+            }
+        }
+        None
+    }
+
+    pub fn get_robot_planet_as_mut_by_robot_id(&mut self, robot_id: &Uuid) -> Option<&mut Planet> {
+        if let Some(round_state) = self.round_states.get_mut(&self.current_round) {
+            for robots in round_state.player_name_player_map.values_mut().map(|player| &mut player.robots) {
                 if let Some(robot) = robots.get(&robot_id) {
                     return round_state.map.get_planet_as_mut(&robot.planet_id);
                 }
@@ -138,10 +146,21 @@ impl GameState {
         }
         None
     }
-    
-    pub fn get_robot_planet(&self, robot_id: &Uuid) -> Option<&Planet> {
-        if let Some(round_state) = self.round_states.get(&self.current_round) {
-            for robots in round_state.player_robot_map.values() {
+
+    pub fn get_robot_planet_as_mut_by_robot_id_and_player_name(&mut self, player_name: &str, robot_id: &Uuid) -> Option<&mut Planet> {
+        if let Some(round_state) = self.round_states.get_mut(&self.current_round) {
+            if let Some(player) = round_state.player_name_player_map.get_mut(player_name) {
+                if let Some(robot) = player.robots.get(&robot_id) {
+                    return round_state.map.get_planet_as_mut(&robot.planet_id);
+                }
+            }
+        }
+        None
+    }
+
+    pub fn get_robot_planet(&mut self, robot_id: &Uuid) -> Option<&Planet> {
+        if let Some(round_state) = self.round_states.get_mut(&self.current_round) {
+            for robots in round_state.player_name_player_map.values_mut().map(|player| &mut player.robots) {
                 if let Some(robot) = robots.get(&robot_id) {
                     return round_state.map.get_planet(&robot.planet_id);
                 }

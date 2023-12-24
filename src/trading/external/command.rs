@@ -4,7 +4,7 @@ use uuid::Uuid;
 use crate::trading::external::command_object::CommandObject;
 use crate::trading::external::command_type::CommandType;
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Command {
     pub player_name: String,
     pub game_id: String,

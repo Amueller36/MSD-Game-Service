@@ -1,5 +1,7 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::future::Future;
+use std::ops::Deref;
+use std::sync::Arc;
 use std::time::Duration;
 use actix_web::{HttpResponse, Responder, web};
 use actix_web::web::{get, to};
@@ -9,13 +11,22 @@ use mobc_redis::RedisConnectionManager;
 use rayon::prelude::*;
 use redis::Commands;
 use serde_json::json;
+use tokio::sync::Mutex;
 use tokio::time::sleep;
+use tracing::error;
 use uuid::Uuid;
 use crate::game::game_state::{GameState, GameStatus, RoundState};
 use crate::planet::map_generator::MapGenerator;
 use crate::planet::planet::Planet;
-use crate::player::Player;
+use crate::player::PlayerState;
 use crate::trading::external::command::Command;
+use crate::trading::external::command_type::CommandType;
+use crate::trading::external::handler::battle_command_handler::{apply_damage_for_round, calculate_damage_for_round};
+use crate::trading::external::handler::buy_command_handler::handle_buy_command;
+use crate::trading::external::handler::mining_command_handler::handle_mining_command;
+use crate::trading::external::handler::movement_command_handler::handle_movement_command;
+use crate::trading::external::handler::regenerate_command_handler::handle_regenerate_command;
+use crate::trading::external::handler::sell_command_handler::handle_selling_command;
 
 pub fn game_routes(cfg: &mut web::ServiceConfig) {
     cfg.service(create_game)
@@ -222,10 +233,19 @@ pub struct JoinGameRequestBody {
 async fn join_game(body: web::Json<JoinGameRequestBody>, path: web::Path<String>, redis_client: web::Data<Pool<RedisConnectionManager>>) -> impl Responder {
     let game_id = path.into_inner();
     let starting_money: u32 = 500;
-    let player = Player {
+    let player = PlayerState {
         player_name: body.player_name.to_string(),
         money: starting_money,
         visited_planets: HashSet::new(),
+        commands: vec![
+            (CommandType::SELLING, VecDeque::new()),
+            (CommandType::BUYING, VecDeque::new()),
+            (CommandType::MOVEMENT, VecDeque::new()),
+            (CommandType::BATTLE, VecDeque::new()),
+            (CommandType::MINING, VecDeque::new()),
+            (CommandType::REGENERATE, VecDeque::new()),
+        ].into_iter().collect(),
+        robots: HashMap::new()
     };
     with_game_lock(&redis_client, &game_id, || async {
         {
@@ -385,8 +405,75 @@ async fn end_game(path: web::Path<String>, redis_client: web::Data<Pool<RedisCon
     }).await.unwrap_or(HttpResponse::NotFound().body(format!("Game {game_id} can't be ended because it was not found.")))
 }
 
+fn all_players_submitted_commands(game_state: &GameState) -> bool {
+    //check if every player has submitted x amount of commands where x is the amount of robots for that player
+    let current_round = game_state.current_round;
+    let round_state = game_state.round_states.get(&current_round).unwrap();
+    let players = &round_state.player_name_player_map;
+    for player in players.values() {
+        let player_commands = &player.commands;
+        let player_robots = &player.robots;
+        if player_commands.len() != player_robots.len() {
+            return false;
+        }
+    }
+    return true;
+}
+
+async fn process_commands_for_round(game_state: &mut GameState) -> Option<GameState> {
+    let game_state: GameState = game_state.clone();
+    let current_round = game_state.current_round;
+    let round_state = game_state.round_states.get_mut(&current_round).unwrap();
+    let players = &mut round_state.player_name_player_map;
+    let sell_commands =  players.values_mut().map(|player| player.commands.get_mut(&CommandType::SELLING).unwrap().drain(..));
+    //
+    // for player in players.values_mut() {
+    //     //process only trading commands (First sell then buy) and make sure to deque them.
+    //     let selling_commands = player.commands.get_mut(&CommandType::SELLING).unwrap();
+    //     while let Some(sell_command) = selling_commands.pop_front() {
+    //         handle_selling_command(player, sell_command);
+    //     }
+    //     let buying_commands = player.commands.get_mut(&CommandType::BUYING).unwrap();
+    //     while let Some(buy_command) = buying_commands.pop_front() {
+    //         handle_buy_command(player, buy_command, game_state);
+    //     }
+    // }
+
+    for player in players.values_mut() {
+        //process only move commands and make sure to deque them.
+        let movement_commands = player.commands.get_mut(&CommandType::MOVEMENT).unwrap();
+        while let Some(move_command) = movement_commands.pop_front() {
+            let (x,y) = round_state.map.indices.get(&move_command.command_object.planet_id.unwrap()).unwrap();
+            let robot_planet = round_state.map.planets[*x][*y].as_mut().unwrap();
+            let robot = player.robots.get_mut(&move_command.command_object.robot_id.unwrap()).unwrap();
+            handle_movement_command(move_command, robot_planet, robot).expect(format!("Failed to handle Movement Command for {}", player.player_name).as_str());
+        }
+    }
+    //process battle commands
+
+    // let damage_reports = calculate_damage_for_round(Arc::new(Mutex::new(&game_state.round_states.get(&game_state.current_round).unwrap().player_name_player_map))).await;
+    // apply_damage_for_round(damage_reports, game_state);
+    //
+    //
+    // for player in players.values_mut() {
+    //     //process only mining commands and make sure to deque them.
+    //     let mining_commands = player.commands.get_mut(&CommandType::MINING).unwrap();
+    //     while let Some(mining_command) = mining_commands.pop_front() {
+    //         handle_mining_command(mining_command, game_state);
+    //     }
+    // }
+    //
+    // for player in players.values_mut() {
+    //     //process only regenerate commands and make sure to deque them.
+    //     let regenerate_commands = player.commands.get_mut(&CommandType::REGENERATE).unwrap();
+    //     while let Some(regenerate_command) = regenerate_commands.pop_front() {
+    //         handle_regenerate_command(player, regenerate_command);
+    //     }
+    // }
+}
+
 #[actix_web::post("/games/{game_id}/commands")]
-async fn handle_batch_of_commands(body: web::Json<Vec<Command>>, path: web::Path<String>, redis_client: web::Data<Pool<RedisConnectionManager>>) -> impl Responder {
+async fn handle_batch_of_commands(mut body: web::Json<Vec<Command>>, path: web::Path<String>, redis_client: web::Data<Pool<RedisConnectionManager>>) -> impl Responder {
     /*
     Commands are executed in the following order:
     1. Trading
@@ -396,6 +483,60 @@ async fn handle_batch_of_commands(body: web::Json<Vec<Command>>, path: web::Path
     5. Mining
     6. Regenerating
      */
+    if body.0.is_empty() {
+        return HttpResponse::BadRequest().body("No commands found");
+    }
+
+    let game_id = path.into_inner();
+    let player_name = body.get(0).unwrap().player_name.clone();
+    let commands = body.0;
+
+    with_game_lock(&redis_client, &game_id, || async {
+        let mut con = redis_client.get().await.expect("Failed to get Redis connection from pool");
+        let game: String = con.get(format!("games/{}", &game_id)).await.expect(format!("Failed to get game {}", game_id).as_str());
+        let mut game_state: GameState = serde_json::from_str(game.as_str()).unwrap();
+        let current_round = game_state.current_round;
+        let round_state = game_state.round_states.get_mut(&current_round).unwrap();
+        //TODO: "Check hinzufügen, der schaut ob es der letzte player ist, dem commands gefehlt haben.")
+        let player = round_state.player_name_player_map.get_mut(&player_name).unwrap();
+        if !player.commands.is_empty() {
+            error!("Overwriting commands for player {} ", player.player_name);
+            player.commands.clear();
+        }
+        let _ = commands.into_par_iter().map(|command| {
+            let mut command_queue_for_type = VecDeque::new();
+            if player.commands.contains_key(&command.command_type) {
+                command_queue_for_type = player.commands.get(&command.command_type).unwrap().to_owned();
+            }
+            command_queue_for_type.push_back(command)
+        });
+
+        // while let Some(sell_command) = player.commands.get_mut(&CommandType::SELLING).and_then(|commands| commands.pop_front()) {
+        //     handle_selling_command(player, sell_command, &mut game_state);
+        // }
+        // while let Some(buy_command) = player.commands.get_mut(&CommandType::BUYING).and_then(|commands| commands.pop_front()) {
+        //     handle_buy_command(player, buy_command, &mut game_state);
+        // }
+        // while let Some(move_command) = player.commands.get_mut(&CommandType::MOVEMENT).and_then(|commands| commands.pop_front()) {
+        //     handle_movement_command(move_command, &mut game_state).expect(format!("Failed to handle Movement Command for {}", player_name).as_str());
+        // }
+        // while let Some(battle_command) = player.commands.get_mut(&CommandType::BATTLE).and_then(|commands| commands.pop_front()) {
+        //     handle_battle_command(battle_command, &mut game_state).expect(format!("Failed to handle Battle Command for {}", player_name).as_str());
+        // }
+        // while let Some(mining_command) = player.commands.get_mut(&CommandType::MINING).and_then(|commands| commands.pop_front()) {
+        //     handle_mining_command(mining_command, &mut game_state).expect(format!("Failed to handle Movement Command for {}", player_name).as_str());
+        // }
+        // while let Some(regenerate_command) = player.commands.get_mut(&CommandType::REGENERATE).and_then(|commands| commands.pop_front()) {
+        //     handle_regenerate_command(regenerate_command, &mut game_state).expect(format!("Failed to handle Movement Command for {}", player_name).as_str());
+        // }
+
+        //Save gamestate to db and increment round number
+        let is_write_successful: bool = con.set(format!("games/{}", &game_id), serde_json::to_string(&game_state).unwrap()).await.unwrap_or(false);
+        if !is_write_successful {
+            return Some(HttpResponse::InternalServerError().body(format!("Failed to write game {} to Redis", &game_id)));
+        }
+        return Some(HttpResponse::Ok().finish());
+    });
     return HttpResponse::Ok().body("Not implemented yet");
     todo!()
 }
