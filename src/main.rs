@@ -19,7 +19,7 @@ async fn hello_world() -> impl Responder {
 #[actix_web::main]
 async fn main() -> Result<(),std::io::Error>{
     tracing_subscriber::fmt::init();
-    let client = mobc_redis::redis::Client::open("redis://0.0.0.0:6379").expect("Invalid redis url");
+    let client = mobc_redis::redis::Client::open("redis://127.0.0.1:6379").expect("Invalid redis url");
     let pool_manager = RedisConnectionManager::new(client);
     let pool = mobc::Pool::builder().build(pool_manager);
     let pool_as_sharable_data = Data::new(pool);

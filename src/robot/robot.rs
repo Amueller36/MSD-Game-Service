@@ -19,6 +19,18 @@ pub struct Robot {
 }
 
 impl Robot {
+
+    pub fn new (robot_id: Uuid, planet_id: Uuid) -> Robot {
+        let levels = RobotLevels::default();
+        Robot {
+            robot_id,
+            planet_id,
+            health: levels.get_health_for_level(),
+            energy: levels.get_energy_for_level(),
+            levels,
+            inventory: HashMap::new()
+        }
+    }
     pub fn is_alive(&self) -> bool {
         self.health > 0
     }
@@ -36,6 +48,10 @@ impl Robot {
         } else {
             self.energy += self.levels.get_energy_regen_for_level();
         }
+    }
+
+    pub fn get_inventory_value(&self) -> u32 {
+        todo!()
     }
 
     pub fn get_free_inventory_space(&self) -> u32 {

@@ -5,16 +5,42 @@ use crate::robot::robot_level::RobotLevel;
 
 #[derive(Serialize,Deserialize,Debug, Clone)]
 pub struct RobotLevels {
-    health_level : RobotLevel,
-    damage_level : RobotLevel,
-    mining_level : RobotLevel,
-    mining_speed_level : RobotLevel,
-    energy_level: RobotLevel,
-    energy_regen_level: RobotLevel,
-    storage_level : RobotLevel
+    pub health_level : RobotLevel,
+    pub damage_level : RobotLevel,
+    pub mining_level : RobotLevel,
+    pub mining_speed_level : RobotLevel,
+    pub energy_level: RobotLevel,
+    pub energy_regen_level: RobotLevel,
+    pub storage_level : RobotLevel
+}
+
+impl Default for RobotLevels{
+    fn default() -> Self {
+        RobotLevels {
+            health_level : RobotLevel::LEVEL0,
+            damage_level : RobotLevel::LEVEL0,
+            mining_level : RobotLevel::LEVEL0,
+            mining_speed_level : RobotLevel::LEVEL0,
+            energy_level: RobotLevel::LEVEL0,
+            energy_regen_level: RobotLevel::LEVEL0,
+            storage_level : RobotLevel::LEVEL0
+        }
+    }
+
 }
 
 impl RobotLevels {
+
+    pub fn get_cost_for_level(level : &RobotLevel) -> u32 {
+        match level {
+            RobotLevel::LEVEL0 => {0}
+            RobotLevel::LEVEL1 => {2}
+            RobotLevel::LEVEL2 => {4}
+            RobotLevel::LEVEL3 => {6}
+            RobotLevel::LEVEL4 => {9}
+            RobotLevel::LEVEL5 => {10}
+        }
+    }
     pub fn get_health_for_level(&self) -> u32 {
         match self.health_level {
             RobotLevel::LEVEL0 => {0}

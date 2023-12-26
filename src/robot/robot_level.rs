@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize,Deserialize,Debug,Clone)]
+#[derive(Serialize,Deserialize,Debug,Clone, PartialEq, PartialOrd)]
 pub enum RobotLevel{
     LEVEL0,
     LEVEL1,

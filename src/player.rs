@@ -8,8 +8,13 @@ use crate::trading::external::command_type::CommandType;
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct PlayerState {
     pub player_name: String,
-    pub money: u32,
+    pub money: Money,
     pub visited_planets: HashSet<Uuid>,
     pub robots : HashMap<Uuid,Robot>,
     pub commands: HashMap<CommandType, VecDeque<Command>>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct Money{
+    pub amount: u32,
 }
