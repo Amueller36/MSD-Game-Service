@@ -6,11 +6,14 @@ use tracing::error;
 use uuid::Uuid;
 use crate::game::game_state::GameState;
 use crate::player::PlayerState;
+use crate::robot::robot::Robot;
 use crate::trading::external::command::Command;
 use crate::trading::external::command_type::CommandType;
 
 pub struct DamageReport {
-    robot_id: Uuid,
+    attacker_id: Uuid,
+    attacker_name: String,
+    defender_id: Uuid,
     damage_to_take: u32,
 }
 
@@ -30,7 +33,9 @@ pub async fn calculate_damage_for_round(game_state: &mut GameState) -> Vec<Damag
                 if attacker_robot.is_alive() {
                     let attacker_damage = attacker_robot.levels.get_damage_for_level();
                     local_damage_reports.push(DamageReport {
-                        robot_id: target_id,
+                        attacker_id,
+                        attacker_name: player.player_name.clone(),
+                        defender_id: target_id,
                         damage_to_take: attacker_damage,
                     });
                 } else {
@@ -43,9 +48,29 @@ pub async fn calculate_damage_for_round(game_state: &mut GameState) -> Vec<Damag
 }
 
 pub fn apply_damage_for_round(damage_reports: Vec<DamageReport>, game_state: &mut GameState) {
+    pub struct KillReport {
+        pub attacker_robot_id: Uuid,
+        pub attacker_name: String,
+        pub player_name_whose_robot_got_killed: String,
+        pub killed_robot : Robot
+    }
+    let mut kill_reports = Vec::new();
     for damage_report in damage_reports {
-        let target_robot = game_state.get_robot_for_current_round_by_robot_id(&damage_report.robot_id).expect("Target robot not found");
+        let (target_robot, target_player_name) = game_state.get_robot_and_playername_for_current_round_by_robot_id(&damage_report.defender_id).expect("Target robot not found");
         target_robot.take_damage(damage_report.damage_to_take);
+        if !target_robot.is_alive() {
+            kill_reports.push(KillReport {
+                attacker_name: damage_report.attacker_name,
+                attacker_robot_id: damage_report.attacker_id,
+                player_name_whose_robot_got_killed: target_player_name,
+                killed_robot: target_robot.clone()
+            });
+        }
+    }
+
+    for report in kill_reports {
+        let player_state = game_state.get_player_for_current_round_as_mut(&report.attacker_name).expect(format!("Player {} (Attacker) not found", report.attacker_name).as_str());
+        player_state.killed_robots.insert(report.attacker_robot_id, (report.player_name_whose_robot_got_killed, report.killed_robot));
     }
 }
 

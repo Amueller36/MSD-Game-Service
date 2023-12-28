@@ -9,5 +9,18 @@ services:
       - ./redis.conf:/etc/keydb/keydb.conf
     command: keydb-server /usr/local/etc/redis/redis.conf #switch to redis-server for redis
 
+  game-server:
+    build:
+        context: .
+        dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    depends_on:
+      - redis
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - RUST_LOG=INFO
+
 volumes:
   redis_data:

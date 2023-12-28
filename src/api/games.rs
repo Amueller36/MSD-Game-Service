@@ -20,6 +20,7 @@ use crate::game::game_state::{GameState, GameStatus, RoundState};
 use crate::planet::map_generator::MapGenerator;
 use crate::planet::planet::Planet;
 use crate::player::{Money, PlayerState};
+use crate::robot::robot::Robot;
 use crate::trading::external::command::Command;
 use crate::trading::external::command_type::CommandType;
 use crate::trading::external::handler::battle_command_handler::{apply_damage_for_round, calculate_damage_for_round, delete_commands_for_dead_robots};
@@ -48,7 +49,8 @@ pub fn game_routes(cfg: &mut web::ServiceConfig) {
         .service(end_game)
         .service(handle_batch_of_commands)
         .service(get_robots_for_current_round)
-        .service(get_robot_for_current_round_by_player_id_and_robot_id);
+        .service(get_robot_for_current_round_by_player_id_and_robot_id)
+        .service(get_player_state_for_current_round);
 }
 
 
@@ -167,15 +169,16 @@ async fn get_all_created_games(redis_client: web::Data<Pool<RedisConnectionManag
     let mut created_games_states: Vec<GameState> = Vec::new();
     while let Some(key) = game_ids.next_item().await {
         let game: String = con2.get(&key).await.expect("Failed to get game");
-        let game_state: GameState = serde_json::from_str(game.as_str()).unwrap();
+        let mut game_state: GameState = serde_json::from_str(game.as_str()).unwrap();
         if game_state.status == GameStatus::Created {
+            game_state.round_states.clear(); // Not relevant for this route.
             created_games_states.push(game_state);
         }
     }
     if created_games_states.is_empty() {
         return HttpResponse::NotFound().body("No games found");
     }
-    HttpResponse::Ok().body(json!({ "games": created_games_states }).to_string())
+    HttpResponse::Ok().body(serde_json::to_string(&created_games_states).unwrap())
 }
 
 #[actix_web::get("/games/{game_id}")]
@@ -269,6 +272,7 @@ async fn join_game(body: web::Json<JoinGameRequestBody>, path: web::Path<String>
             (CommandType::REGENERATE, VecDeque::new()),
         ].into_iter().collect(),
         robots: HashMap::new(),
+        killed_robots: HashMap::new(),
     };
     with_game_lock(&redis_client, &game_id, || async {
         {
@@ -391,6 +395,9 @@ async fn start_game(path: web::Path<String>, redis_client: web::Data<Pool<RedisC
             let mut game_state: GameState = serde_json::from_str(game.as_str()).unwrap();
             if game_state.status != GameStatus::Created {
                 return Some(HttpResponse::BadRequest().body(format!("Game {} can't be started because it is currently in status {:?}", &game_id, &game_state.status)));
+            }
+            if game_state.participating_players.len() == 0 {
+                return Some(HttpResponse::BadRequest().body(format!("Game {} can't be started because no player has joined yet", &game_id)));
             }
             game_state.status = GameStatus::Started;
             let is_write_successful: bool = con.set(format!("games/{}", &game_id), serde_json::to_string(&game_state).unwrap()).await.unwrap_or(false);
@@ -556,6 +563,39 @@ async fn get_robot_for_current_round_by_player_id_and_robot_id(path: web::Path<(
 }
 
 
+#[actix_web::get("/games/{game_id}/currentRound/players/{player_name}")]
+async fn get_player_state_for_current_round(path: web::Path<(String,String)>, redis_client: web::Data<Pool<RedisConnectionManager>>) -> impl Responder {
+    let (game_id, player_name) = path.into_inner();
+    let mut con = redis_client.get().await.expect("Failed to get Redis connection from pool");
+    let game: String = con.get(format!("games/{}", &game_id)).await.expect(&format!("Failed to get game {}", &game_id));
+    let game_state: GameState = serde_json::from_str(&game).unwrap();
+    let player_state = game_state.get_player_for_current_round(&player_name).unwrap();
 
+    #[derive(serde::Serialize)]
+    struct PlayerStateDto<'a> {
+        current_round: u16,
+        player_name: String,
+        money: u32,
+        visited_planets: HashMap<Uuid, &'a Planet>, // PlanetId -> Planet
+        alive_robots: HashMap<Uuid, &'a Robot>, // YourRobotId -> YOurRobot
+        dead_robots: HashMap<Uuid, &'a Robot>, // YOurRobotId -> YOurRobot
+        killed_robots: &'a HashMap<Uuid, (String, Robot)>, // YOurRobotId -> (EnemyPlayerName, EnemyRobot)
+    }
 
+    let player_state_dto = PlayerStateDto {
+        current_round: game_state.current_round,
+        player_name: player_state.player_name.clone(),
+        money: player_state.money.amount,
+        visited_planets: player_state.visited_planets.iter().map(|(&planet_id)| {
+            let (x, y) = game_state.round_states[&game_state.current_round].map.indices.get(&planet_id).expect("Planet not found in indices");
+            let planet = game_state.round_states[&game_state.current_round].map.planets[*x][*y].as_ref().unwrap();
+            (planet_id, planet)
+        }).collect(),
+        alive_robots: player_state.robots.iter().filter(|(_, robot)| robot.is_alive()).map(|(&robot_id, robot)| (robot_id, robot)).collect(),
+        dead_robots: player_state.robots.iter().filter(|(_, robot)| !robot.is_alive()).map(|(&robot_id, robot)| (robot_id, robot)).collect(),
+        killed_robots: &player_state.killed_robots,
+    };
+
+    HttpResponse::Ok().json(player_state_dto)
+}
 

@@ -91,6 +91,17 @@ impl GameState {
         }
     }
 
+    pub fn get_player_name_by_robot_id(&self, robot_id: &Uuid) -> Option<&String> {
+        for round_state in self.round_states.get(&self.current_round) {
+            for player in round_state.player_name_player_map.values() {
+                if player.robots.contains_key(&robot_id) {
+                    return Some(&player.player_name);
+                }
+            }
+        }
+        None
+    }
+
     pub fn get_robots_for_current_round(&mut self, player_name: &str) -> Option<&mut HashMap<Uuid, Robot>> {
         if let Some(round_state) = self.round_states.get_mut(&self.current_round) {
             return Some(&mut round_state.player_name_player_map.get_mut(player_name).expect(&*format!("Player {} does not exist", player_name)).robots);
@@ -98,12 +109,20 @@ impl GameState {
         None
     }
 
-    pub fn get_player_for_current_round(&mut self, player_name: &str) -> Option<&mut PlayerState> {
+    pub fn get_player_for_current_round_as_mut(&mut self, player_name: &str) -> Option<&mut PlayerState> {
         if let Some(round_state) = self.round_states.get_mut(&self.current_round) {
             return round_state.player_name_player_map.get_mut(player_name);
         }
         None
     }
+
+    pub fn get_player_for_current_round(&self, player_name: &str) -> Option<&PlayerState> {
+        if let Some(round_state) = self.round_states.get(&self.current_round) {
+            return round_state.player_name_player_map.get(player_name);
+        }
+        None
+    }
+
 
     pub fn get_robots_for_current_round_by_robot_id(&mut self, robot_id: &Uuid) -> Option<&mut HashMap<Uuid, Robot>> {
         if let Some(round_state) = self.round_states.get_mut(&self.current_round) {
@@ -116,11 +135,11 @@ impl GameState {
         None
     }
 
-    pub fn get_robot_for_current_round_by_robot_id(&mut self, robot_id: &Uuid) -> Option<&mut Robot> {
+    pub fn get_robot_and_playername_for_current_round_by_robot_id(&mut self, robot_id: &Uuid) -> Option<(&mut Robot, String)> {
         if let Some(round_state) = self.round_states.get_mut(&self.current_round) {
-            for robots in round_state.player_name_player_map.values_mut().map(|player| &mut player.robots) {
+            for (robots, player_name) in round_state.player_name_player_map.values_mut().map(|player| (&mut player.robots, player.player_name.clone())) {
                 if let Some(robot) = robots.get_mut(&robot_id) {
-                    return Some(robot);
+                    return Some((robot, player_name));
                 }
             }
         }
@@ -174,7 +193,7 @@ impl GameState {
         if self.current_round < self.max_rounds {
             self.current_round += 1;
             info!("Starting round {}", self.current_round);
-            return true
+            return true;
         }
         self.status = GameStatus::Ended;
         false

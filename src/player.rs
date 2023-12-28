@@ -12,6 +12,7 @@ pub struct PlayerState {
     pub visited_planets: HashSet<Uuid>,
     pub robots : HashMap<Uuid,Robot>,
     pub commands: HashMap<CommandType, VecDeque<Command>>,
+    pub killed_robots : HashMap<Uuid,(String,Robot)>
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
