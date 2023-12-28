@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use rayon::prelude::*;
 
 use serde::{Deserialize, Serialize};
+use tracing::log::info;
 use uuid::Uuid;
 
 use crate::planet::planet::Planet;
@@ -172,6 +173,7 @@ impl GameState {
     pub fn start_next_round(&mut self) -> bool {
         if self.current_round < self.max_rounds {
             self.current_round += 1;
+            info!("Starting round {}", self.current_round);
             return true
         }
         self.status = GameStatus::Ended;

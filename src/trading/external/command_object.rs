@@ -3,14 +3,14 @@ use uuid::Uuid;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct CommandObject {
-    #[serde(skip_serializing_if = "Option::is_none", alias = "robotId")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub robot_id: Option<Uuid>,
-    #[serde(skip_serializing_if = "Option::is_none", alias = "planetId")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub planet_id: Option<Uuid>,
-    #[serde(skip_serializing_if = "Option::is_none", alias = "targetId")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub target_id: Option<Uuid>,
-    #[serde(skip_serializing_if = "Option::is_none", alias = "itemName")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub item_name: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none", alias = "itemQuantity")]
-    pub item_quantity: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub item_quantity: Option<u32>,
 }

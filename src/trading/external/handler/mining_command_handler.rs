@@ -1,7 +1,9 @@
 use std::ops::Deref;
 use tracing::error;
+use tracing::log::info;
 use crate::game::game_state::GameState;
 use crate::trading::external::command::Command;
+use crate::trading::external::command_type::CommandType;
 
 // pub fn handle_mining_command(mining_command: Command, mut game_state: GameState) -> Option<GameState>{
 //     let robot_id = mining_command.command_object.robot_id.expect("Robot id was missing in mining command");
@@ -48,3 +50,40 @@ use crate::trading::external::command::Command;
 //     }
 //     Some(game_state)
 // }
+
+pub fn handle_mining_commands(game_state: &mut GameState) {
+    let round_state = game_state.round_states.get_mut(&game_state.current_round).unwrap();
+    let map = &mut round_state.map;
+    let player_name_player_map = round_state.player_name_player_map.values_mut();
+    for player in player_name_player_map {
+        if let Some(mining_commands_queue) = player.commands.get_mut(&CommandType::MINING) {
+            while let Some(mining_command) = mining_commands_queue.pop_front() {
+                let robot_id = mining_command.command_object.robot_id.expect("Robot id is required");
+                let target_planet_id = mining_command.command_object.target_id.expect("Target id is required for mining commands");
+                let robot = player.robots.get_mut(&robot_id).expect("Robot not found");
+                let mut target_planet = map.get_planet_as_mut(&target_planet_id).expect("Target planet not found");
+                if robot.planet_id == target_planet_id {
+                    if robot.is_inventory_full() {
+                        info!("Robot {} has a full inventory and cannot mine", robot_id);
+                    } else {
+                        let mining_amount_for_level = robot.levels.get_mining_amount_for_level();
+                        let potential_mining_amount = std::cmp::min(robot.get_free_storage_space(), mining_amount_for_level);
+                        if let Some((resource, resource_amount)) = &mut target_planet.resources {
+                            if *resource_amount == 0 {
+                                info!("No resources left to mine on planet {}", target_planet_id);
+                            } else {
+                                let mining_amount = std::cmp::min(potential_mining_amount, *resource_amount);
+                                robot.add_resource_to_inventory(resource, &mining_amount);
+                                *resource_amount -= mining_amount;
+                                info!("Robot {} mined {} {:?} on planet {}", robot_id, mining_amount, resource, target_planet_id);
+                                if *resource_amount == 0 {
+                                    target_planet.resources = None;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

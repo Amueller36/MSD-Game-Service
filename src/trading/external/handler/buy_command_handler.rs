@@ -9,7 +9,6 @@ use crate::trading::external::command::Command;
 use crate::trading::external::command_type::CommandType;
 
 pub fn handle_buy_commands(game_state: &mut GameState) {
-    //TODO:"Handle buying of robots and spawning them on random planet, and buying health/energy restores
     let round_state = game_state.round_states.get_mut(&game_state.current_round).unwrap();
     let map = &round_state.map;
     let mut player_name_player_map = round_state.player_name_player_map.values_mut();
@@ -103,15 +102,16 @@ pub fn handle_buy_commands(game_state: &mut GameState) {
                         match item {
                             Item::Robot(amount) => {
                                 //choose random planet on map and spawn robot there
-                                for _ in 0..=amount {
+                                for _ in 0..amount {
                                     let rand = rand::random::<usize>() % map.indices.len();
                                     let planet_id = map.indices.keys().nth(rand).expect("Planet Index not found, probably out of bounds");
                                     let robot = Robot::new(
                                         Uuid::new_v4(),
                                         *planet_id,
                                     );
+                                    info!("Player {} bought robot {} and spawned it on planet {}", player.player_name, robot.robot_id, planet_id);
+                                    player.visited_planets.insert(*planet_id);
                                     player.robots.insert(robot.robot_id, robot);
-                                    info!("Player {} bought robot and spawned it on planet {}", player.player_name, planet_id);
                                 }
                             }
                             Item::HealthRestore => {
@@ -134,7 +134,7 @@ pub fn handle_buy_commands(game_state: &mut GameState) {
     }
 }
 
-fn parse_item_name(item_name: &str, amount: u16) -> Option<UpgradeOrItem> {
+fn parse_item_name(item_name: &str, amount: u32) -> Option<UpgradeOrItem> {
     let item_name = item_name.to_lowercase();
     let parts: Vec<&str> = item_name.split('_').collect();
 
@@ -201,7 +201,7 @@ pub enum UpgradeType {
 
 #[derive(Debug, Clone,PartialEq)]
 pub enum Item {
-    Robot(u16),
+    Robot(u32),
     HealthRestore,
     EnergyRestore,
 }
@@ -209,9 +209,9 @@ pub enum Item {
 impl Item {
     pub fn get_cost(&self) -> u32 {
         match self {
-            Item::Robot(i) => 100 * *i as u32,
-            Item::HealthRestore => 75,
-            Item::EnergyRestore => 50,
+            Item::Robot(amount_of_robots) => 100 * *amount_of_robots as u32,
+            Item::HealthRestore => 50,
+            Item::EnergyRestore => 75,
         }
     }
 }

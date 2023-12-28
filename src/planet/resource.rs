@@ -29,4 +29,14 @@ impl Resource {
             Resource::PLATINUM => 3,
         }
     }
+
+    pub fn get_selling_value(&self) -> u32 {
+        match self {
+            Resource::COAL => 5,
+            Resource::IRON => 15,
+            Resource::GEM => 30,
+            Resource::GOLD => 50,
+            Resource::PLATINUM => 60,
+        }
+    }
 }

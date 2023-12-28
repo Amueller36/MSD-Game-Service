@@ -35,7 +35,7 @@ impl Robot {
         self.health > 0
     }
     pub fn is_inventory_full(&self) -> bool {
-        todo!()
+       self.get_free_storage_space() == 0
     }
 
     pub fn regenerate(&mut self) {
@@ -51,17 +51,18 @@ impl Robot {
     }
 
     pub fn get_inventory_value(&self) -> u32 {
-        todo!()
+        let mut inventory_value = 0;
+        for (resource, amount) in &self.inventory {
+            inventory_value += resource.get_selling_value() * amount;
+        }
+        inventory_value
     }
 
-    pub fn get_free_inventory_space(&self) -> u32 {
-        todo!()
+    pub fn get_free_storage_space(&self) -> u32 {
+        let used_inventory_space = self.inventory.iter().fold(0, |acc, (_, amount)| acc + amount);
+        self.levels.get_storage_for_level() - used_inventory_space
     }
 
-    fn move_to_planet(&mut self, planet: Planet) {
-        todo!()
-
-    }
 
     pub fn add_resource_to_inventory(&mut self, resource: &Resource, amount: &u32) {
         if let Some(current_amount) = self.inventory.get_mut(&resource) {

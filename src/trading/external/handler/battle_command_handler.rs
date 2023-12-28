@@ -9,13 +9,14 @@ use crate::player::PlayerState;
 use crate::trading::external::command::Command;
 use crate::trading::external::command_type::CommandType;
 
-struct DamageReport {
+pub struct DamageReport {
     robot_id: Uuid,
     damage_to_take: u32,
 }
 
-pub async fn calculate_damage_for_round(players: Arc<Mutex<&HashMap<String, PlayerState>>>) -> Vec<DamageReport> {
-    let player_states = players.lock().await;
+pub async fn calculate_damage_for_round(game_state: &mut GameState) -> Vec<DamageReport> {
+    let round_state = game_state.round_states.get_mut(&game_state.current_round).unwrap();
+    let player_states = &round_state.player_name_player_map;
 
     player_states.par_iter().flat_map(|(_, player)| {
         let mut local_damage_reports = Vec::new();
@@ -45,5 +46,25 @@ pub fn apply_damage_for_round(damage_reports: Vec<DamageReport>, game_state: &mu
     for damage_report in damage_reports {
         let target_robot = game_state.get_robot_for_current_round_by_robot_id(&damage_report.robot_id).expect("Target robot not found");
         target_robot.take_damage(damage_report.damage_to_take);
+    }
+}
+
+pub fn delete_commands_for_dead_robots(game_state: &mut GameState) {
+    let round_state = game_state.round_states.get_mut(&game_state.current_round).unwrap();
+    let player_states = &mut round_state.player_name_player_map;
+
+    for player in player_states.values_mut() {
+        let players_robots = &mut player.robots;
+        //clear mining and regenerating commands for dead robots
+        for (robot_id, robot) in players_robots.iter_mut() {
+            if !robot.is_alive() {
+                let mining_commands = player.commands.get_mut(&CommandType::MINING).expect("Mining commands are required");
+                mining_commands.retain(|command| command.command_object.robot_id.unwrap() != *robot_id);
+
+                let regenerating_commands = player.commands.get_mut(&CommandType::REGENERATE).expect("Regenerating commands are required");
+                regenerating_commands.retain(|command| command.command_object.robot_id.unwrap() != *robot_id);
+            }
+        }
+
     }
 }
