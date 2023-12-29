@@ -29,7 +29,7 @@ async fn main() -> Result<(),std::io::Error>{
     HttpServer::new(move || {
         actix_web::App::new()
             .wrap(
-                Cors::permissive().send_wildcard().allowed_origin("http://localhost:4200")
+                Cors::permissive().allowed_origin("http://localhost:4200")
             )
             .app_data(Data::clone(&pool_as_sharable_data))
             .service(hello_world)
