@@ -1,3 +1,4 @@
+use actix_cors::Cors;
 use actix_web::{HttpResponse, HttpServer, Responder};
 use actix_web::web::Data;
 use mobc_redis::RedisConnectionManager;
@@ -27,6 +28,9 @@ async fn main() -> Result<(),std::io::Error>{
     let pool_as_sharable_data = Data::new(pool);
     HttpServer::new(move || {
         actix_web::App::new()
+            .wrap(
+                Cors::permissive()
+            )
             .app_data(Data::clone(&pool_as_sharable_data))
             .service(hello_world)
             .configure(api::games::game_routes)
