@@ -92,9 +92,9 @@ impl GameState {
     }
 
     pub fn get_player_name_by_robot_id(&self, robot_id: &Uuid) -> Option<&String> {
-        for round_state in self.round_states.get(&self.current_round) {
+        if let Some(round_state) = self.round_states.get(&self.current_round) {
             for player in round_state.player_name_player_map.values() {
-                if player.robots.contains_key(&robot_id) {
+                if player.robots.contains_key(robot_id) {
                     return Some(&player.player_name);
                 }
             }
@@ -103,12 +103,10 @@ impl GameState {
     }
 
     pub fn get_robots_for_current_round(&mut self, player_name: &str) -> Option<&mut HashMap<Uuid, Robot>> {
-        if let Some(round_state) = self.round_states.get_mut(&self.current_round) {
-            return Some(&mut round_state.player_name_player_map.get_mut(player_name).expect(&*format!("Player {} does not exist", player_name)).robots);
-        }
-        None
+        self.round_states.get_mut(&self.current_round)
+            .and_then(|round_state| round_state.player_name_player_map.get_mut(player_name))
+            .map(|player| &mut player.robots)
     }
-
     pub fn get_player_for_current_round_as_mut(&mut self, player_name: &str) -> Option<&mut PlayerState> {
         if let Some(round_state) = self.round_states.get_mut(&self.current_round) {
             return round_state.player_name_player_map.get_mut(player_name);
