@@ -2,6 +2,7 @@ use std::ops::Deref;
 use tracing::error;
 use tracing::log::info;
 use crate::game::game_state::GameState;
+use crate::robot::robot_levels::RobotLevels;
 use crate::trading::external::command::Command;
 use crate::trading::external::command_type::CommandType;
 
@@ -61,6 +62,7 @@ pub fn handle_mining_commands(game_state: &mut GameState) {
                 let robot_id = mining_command.command_object.robot_id.expect("Robot id is required");
                 let target_planet_id = mining_command.command_object.target_id.expect("Target id is required for mining commands");
                 let robot = player.robots.get_mut(&robot_id).expect("Robot not found");
+                let minable_resources_of_robot = RobotLevels::get_minable_resoures(&robot.levels);
                 let mut target_planet = map.get_planet_as_mut(&target_planet_id).expect("Target planet not found");
                 if robot.planet_id == target_planet_id {
                     if robot.is_inventory_full() {
@@ -69,6 +71,10 @@ pub fn handle_mining_commands(game_state: &mut GameState) {
                         let mining_amount_for_level = robot.levels.get_mining_amount_for_level();
                         let potential_mining_amount = std::cmp::min(robot.get_free_storage_space(), mining_amount_for_level);
                         if let Some((resource, resource_amount)) = &mut target_planet.resources {
+                            if !minable_resources_of_robot.contains(resource) {
+                                info!("Robot {} cannot mine {:?} on planet {} mining level is {:?}", robot_id, resource, target_planet_id, robot.levels.mining_level);
+                                continue;
+                            }
                             if *resource_amount == 0 {
                                 info!("No resources left to mine on planet {}", target_planet_id);
                             } else {
