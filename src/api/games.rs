@@ -147,7 +147,7 @@ async fn get_all_games(redis_client: web::Data<Pool<RedisConnectionManager>>) ->
     if games_states.is_empty() {
         return HttpResponse::NotFound().body("No games found");
     }
-    HttpResponse::Ok().body(json!({ "games": games_states }).to_string())
+    HttpResponse::Ok().json(games_states)
 }
 
 #[actix_web::get("/games/created")]
@@ -190,7 +190,7 @@ async fn get_game(path: web::Path<String>, redis_client: web::Data<Pool<RedisCon
     }).expect("Failed to get Redis connection from pool");
     let game: String = con.get(format!("games/{}", &game_id)).await.expect(format!("Failed to get game {}", game_id).as_str());
     let game_state: GameState = serde_json::from_str(game.as_str()).unwrap();
-    HttpResponse::Ok().body(json!({ "game": game_state }).to_string())
+    HttpResponse::Ok().json(game_state)
 }
 
 #[actix_web::get("/games/{game_id}/currentRound")]
@@ -206,7 +206,7 @@ async fn get_game_current_round(path: web::Path<String>, redis_client: web::Data
     let round_state = game_state.round_states.get_mut(&current_round).unwrap().clone();
     game_state.round_states.clear();
     game_state.round_states.insert(current_round, round_state.clone());
-    HttpResponse::Ok().body(json!({ "game": game_state }).to_string())
+    HttpResponse::Ok().json(game_state)
 }
 
 
@@ -236,7 +236,7 @@ async fn delete_all_games(redis_client: web::Data<Pool<RedisConnectionManager>>)
     if deleted_games.is_empty() {
         return HttpResponse::NotFound().body("No games found");
     }
-    HttpResponse::Ok().body(json!({ "game_ids": deleted_games }).to_string())
+    HttpResponse::Ok().json(deleted_games)
 }
 
 #[actix_web::get("/games/{game_id}/players")]
@@ -246,7 +246,7 @@ async fn get_players(path: web::Path<String>, redis_client: web::Data<Pool<Redis
     let game: String = con.get(format!("games/{}", &game_id)).await.expect(format!("Failed to get game {}", game_id).as_str());
     let game_state: GameState = serde_json::from_str(game.as_str()).unwrap();
     return HttpResponse::Ok().body(json!({
-        "players": game_state.participating_players
+        "participating_players": game_state.participating_players
     }).to_string());
 }
 
@@ -549,7 +549,7 @@ async fn get_robots_for_current_round(path: web::Path<(String, String)>, redis_c
     let game: String = con.get(format!("games/{}", &game_id)).await.expect(format!("Failed to get game {}", game_id).as_str());
     let mut game_state: GameState = serde_json::from_str(game.as_str()).unwrap();
     let robots = game_state.get_robots_for_current_round(&player_name).unwrap();
-    HttpResponse::Ok().body(json!({ "robots": robots }).to_string())
+    HttpResponse::Ok().json(robots)
 }
 
 #[actix_web::get("/games/{game_id}/currentRound/players/{player_name}/robots/{robot_id}")]
