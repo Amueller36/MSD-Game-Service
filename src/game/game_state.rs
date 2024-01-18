@@ -1,6 +1,6 @@
 use std::collections::HashMap;
-use rayon::prelude::*;
 
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use tracing::log::info;
 use uuid::Uuid;
@@ -29,7 +29,7 @@ pub enum GameStatus {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct RoundState {
-    pub round_number: u32,
+    pub round_number: u16,
     pub player_name_player_map: HashMap<String, PlayerState>,
     pub map: GameMap,
 }

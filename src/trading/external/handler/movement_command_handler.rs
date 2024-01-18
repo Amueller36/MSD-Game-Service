@@ -1,10 +1,6 @@
-use std::path::Component;
-use std::sync::Arc;
 use tracing::log::info;
+
 use crate::game::game_state::GameState;
-use crate::planet::planet::Planet;
-use crate::robot::robot::Robot;
-use crate::trading::external::command::Command;
 use crate::trading::external::command_type::CommandType;
 
 pub fn handle_movement_commands(game_state: &mut GameState) {

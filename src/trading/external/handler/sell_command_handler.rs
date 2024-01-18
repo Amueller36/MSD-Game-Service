@@ -1,5 +1,5 @@
 use tracing::log::error;
-use tracing_subscriber::fmt::format;
+
 use crate::game::game_state::GameState;
 use crate::trading::external::command_type::CommandType;
 

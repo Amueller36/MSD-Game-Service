@@ -1,9 +1,7 @@
-use std::ops::Deref;
-use tracing::error;
 use tracing::log::info;
+
 use crate::game::game_state::GameState;
 use crate::robot::robot_levels::RobotLevels;
-use crate::trading::external::command::Command;
 use crate::trading::external::command_type::CommandType;
 
 // pub fn handle_mining_command(mining_command: Command, mut game_state: GameState) -> Option<GameState>{

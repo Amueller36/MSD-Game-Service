@@ -1,22 +1,20 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::future::Future;
-use std::ops::Deref;
-use std::sync::Arc;
 use std::time::Duration;
+
 use actix_web::{HttpResponse, Responder, web};
-use actix_web::web::{get, service, to};
 use mobc::Pool;
 use mobc_redis::redis::AsyncCommands;
 use mobc_redis::RedisConnectionManager;
 use rayon::prelude::*;
 use redis::Commands;
 use serde_json::json;
-use tokio::sync::Mutex;
 use tokio::time::sleep;
 use tracing::error;
 use tracing::log::info;
 use uuid::Uuid;
-use crate::game::game_state::{GameState, GameStatus, RoundState};
+
+use crate::game::game_state::{GameState, GameStatus};
 use crate::planet::map_generator::MapGenerator;
 use crate::planet::planet::Planet;
 use crate::player::{Money, PlayerState};
@@ -479,12 +477,12 @@ async fn process_commands_for_round(mut game_state: GameState) -> Option<GameSta
     handle_mining_commands(&mut game_state);
     handle_regenerate_commands(&mut game_state);
 
-    let new_round_state = game_state.round_states.get_mut(&current_round).unwrap().clone();
+    let mut new_round_state = game_state.round_states.get_mut(&current_round).unwrap().clone();
+    //TODO: Potential flaw in Roundnumber Logic error handling if games are supposed to end.
     game_state.round_states.insert(current_round, old_round_state);
     game_state.start_next_round();
+    new_round_state.round_number = game_state.current_round;
     game_state.round_states.insert(game_state.current_round, new_round_state);
-
-
     Some(game_state)
 }
 
@@ -564,7 +562,7 @@ async fn get_robot_for_current_round_by_player_id_and_robot_id(path: web::Path<(
 
 
 #[actix_web::get("/games/{game_id}/currentRound/players/{player_name}")]
-async fn get_player_state_for_current_round(path: web::Path<(String,String)>, redis_client: web::Data<Pool<RedisConnectionManager>>) -> impl Responder {
+async fn get_player_state_for_current_round(path: web::Path<(String, String)>, redis_client: web::Data<Pool<RedisConnectionManager>>) -> impl Responder {
     let (game_id, player_name) = path.into_inner();
     let mut con = redis_client.get().await.expect("Failed to get Redis connection from pool");
     let game: String = con.get(format!("games/{}", &game_id)).await.expect(&format!("Failed to get game {}", &game_id));
@@ -576,9 +574,12 @@ async fn get_player_state_for_current_round(path: web::Path<(String,String)>, re
         current_round: u16,
         player_name: String,
         money: u32,
-        visited_planets: HashMap<Uuid, &'a Planet>, // PlanetId -> Planet
-        alive_robots: HashMap<Uuid, &'a Robot>, // YourRobotId -> YOurRobot
-        dead_robots: HashMap<Uuid, &'a Robot>, // YOurRobotId -> YOurRobot
+        visited_planets: HashMap<Uuid, &'a Planet>,
+        // PlanetId -> Planet
+        alive_robots: HashMap<Uuid, &'a Robot>,
+        // YourRobotId -> YOurRobot
+        dead_robots: HashMap<Uuid, &'a Robot>,
+        // YOurRobotId -> YOurRobot
         killed_robots: &'a HashMap<Uuid, (String, Robot)>, // YOurRobotId -> (EnemyPlayerName, EnemyRobot)
     }
 

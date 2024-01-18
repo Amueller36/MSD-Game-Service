@@ -1,11 +1,10 @@
 use tracing::log::{error, info};
 use uuid::Uuid;
+
 use crate::game::game_state::GameState;
-use crate::player::PlayerState;
 use crate::robot::robot::Robot;
 use crate::robot::robot_level::RobotLevel;
 use crate::robot::robot_levels::RobotLevels;
-use crate::trading::external::command::Command;
 use crate::trading::external::command_type::CommandType;
 
 pub fn handle_buy_commands(game_state: &mut GameState) {

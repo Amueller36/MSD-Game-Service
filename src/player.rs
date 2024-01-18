@@ -1,6 +1,8 @@
 use std::collections::{HashMap, HashSet, VecDeque};
+
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+
 use crate::robot::robot::Robot;
 use crate::trading::external::command::Command;
 use crate::trading::external::command_type::CommandType;
