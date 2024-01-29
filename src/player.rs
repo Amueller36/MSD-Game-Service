@@ -11,6 +11,7 @@ use crate::trading::external::command_type::CommandType;
 pub struct PlayerState {
     pub player_name: String,
     pub money: Money,
+    pub total_money_made: Money,
     pub visited_planets: HashSet<Uuid>,
     pub robots : HashMap<Uuid,Robot>,
     pub commands: HashMap<CommandType, VecDeque<Command>>,

@@ -1,11 +1,17 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize,Deserialize,Debug,Clone, PartialEq, PartialOrd)]
-pub enum RobotLevel{
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, PartialOrd)]
+pub enum RobotLevel {
     LEVEL0,
     LEVEL1,
     LEVEL2,
     LEVEL3,
     LEVEL4,
-    LEVEL5
+    LEVEL5,
+}
+
+impl Default for RobotLevel {
+    fn default() -> Self {
+        RobotLevel::LEVEL0
+    }
 }

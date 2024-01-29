@@ -6,35 +6,38 @@ use uuid::Uuid;
 
 use crate::planet::resource::Resource;
 use crate::robot::robot_levels::RobotLevels;
+use crate::robot::robot_stats::RobotStats;
 
-#[derive(Serialize,Deserialize,Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Robot {
     pub robot_id: Uuid,
     pub planet_id: Uuid,
     pub health: u32,
     pub energy: u32,
     pub levels: RobotLevels,
-    pub inventory: HashMap<Resource,u32>
+    pub stats: RobotStats,
+    pub inventory: HashMap<Resource, u32>,
 }
 
-impl Robot {
 
-    pub fn new (robot_id: Uuid, planet_id: Uuid) -> Robot {
+impl Robot {
+    pub fn new(robot_id: Uuid, planet_id: Uuid) -> Robot {
         let levels = RobotLevels::default();
         Robot {
             robot_id,
             planet_id,
             health: levels.get_health_for_level(),
             energy: levels.get_energy_for_level(),
+            stats: RobotStats::default(),
             levels,
-            inventory: HashMap::new()
+            inventory: HashMap::new(),
         }
     }
     pub fn is_alive(&self) -> bool {
         self.health > 0
     }
     pub fn is_inventory_full(&self) -> bool {
-       self.get_free_storage_space() == 0
+        self.get_free_storage_space() == 0
     }
 
     pub fn regenerate(&mut self) {
@@ -59,7 +62,7 @@ impl Robot {
 
     pub fn get_free_storage_space(&self) -> u32 {
         let used_inventory_space = self.inventory.iter().fold(0, |acc, (_, amount)| acc + amount);
-        self.levels.get_storage_for_level() - used_inventory_space
+        self.stats.max_storage - used_inventory_space
     }
 
 
@@ -72,7 +75,7 @@ impl Robot {
         }
     }
 
-    pub fn take_damage(&mut self, amount: u32){
+    pub fn take_damage(&mut self, amount: u32) {
         if self.health - amount > 0 {
             self.health -= amount;
         } else {

@@ -21,6 +21,14 @@ services:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - RUST_LOG=INFO
+  map:
+    build:
+        context: ../map-for-andre
+        dockerfile: Dockerfile
+    ports:
+      - "4200:80"
+    environment:
+      - NODE_ENV=production
 
 volumes:
   redis_data:

@@ -63,7 +63,7 @@ impl RobotLevels {
         }
     }
 
-    pub fn get_mining_amount_for_level(&self) -> u32 {
+    pub fn get_mining_speed_for_level(&self) -> u32 {
         match self.mining_speed_level {
             RobotLevel::LEVEL0 => {2}
             RobotLevel::LEVEL1 => {5}
@@ -74,7 +74,7 @@ impl RobotLevels {
         }
     }
 
-    pub fn get_minable_resoures (&self) -> Vec<Resource> {
+    pub fn get_mineable_resoures(&self) -> Vec<Resource> {
         let mut resources = Vec::with_capacity(Resource::variants().len());
         match self.mining_level {
             RobotLevel::LEVEL0 => resources.push(Resource::COAL),

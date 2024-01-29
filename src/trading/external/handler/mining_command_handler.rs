@@ -60,13 +60,13 @@ pub fn handle_mining_commands(game_state: &mut GameState) {
                 let robot_id = mining_command.command_object.robot_id.expect("Robot id is required");
                 let target_planet_id = mining_command.command_object.target_id.expect("Target id is required for mining commands");
                 let robot = player.robots.get_mut(&robot_id).expect("Robot not found");
-                let minable_resources_of_robot = RobotLevels::get_minable_resoures(&robot.levels);
+                let minable_resources_of_robot = RobotLevels::get_mineable_resoures(&robot.levels);
                 let mut target_planet = map.get_planet_as_mut(&target_planet_id).expect("Target planet not found");
                 if robot.planet_id == target_planet_id {
                     if robot.is_inventory_full() {
                         info!("Robot {} has a full inventory and cannot mine", robot_id);
                     } else {
-                        let mining_amount_for_level = robot.levels.get_mining_amount_for_level();
+                        let mining_amount_for_level = robot.levels.get_mining_speed_for_level();
                         let potential_mining_amount = std::cmp::min(robot.get_free_storage_space(), mining_amount_for_level);
                         if let Some((resource, resource_amount)) = &mut target_planet.resources {
                             if !minable_resources_of_robot.contains(resource) {

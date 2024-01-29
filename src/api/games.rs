@@ -86,6 +86,7 @@ async fn with_game_lock<F, Fut>(redis_client: &web::Data<Pool<RedisConnectionMan
 struct CreateGameRequestBody {
     max_rounds: u16,
     max_players: u8,
+    map_size: u8,
 }
 
 #[actix_web::post("/games")]
@@ -95,7 +96,7 @@ async fn create_game(body: web::Json<CreateGameRequestBody>, redis_client: web::
         game_id,
         body.max_rounds,
         body.max_players,
-        MapGenerator::create_map(10),
+        MapGenerator::create_map(body.map_size as usize),
     );
     //save game to redis
     let mut con = redis_client.get().await.expect("Failed to get Redis connection from pool");
@@ -260,6 +261,7 @@ async fn join_game(body: web::Json<JoinGameRequestBody>, path: web::Path<String>
     let player = PlayerState {
         player_name: body.player_name.to_string(),
         money: Money { amount: starting_money },
+        total_money_made: Money { amount: starting_money },
         visited_planets: HashSet::new(),
         commands: vec![
             (CommandType::SELLING, VecDeque::new()),
@@ -557,7 +559,7 @@ async fn get_robot_for_current_round_by_player_id_and_robot_id(path: web::Path<(
     let game: String = con.get(format!("games/{}", &game_id)).await.expect(format!("Failed to get game {}", game_id).as_str());
     let mut game_state: GameState = serde_json::from_str(game.as_str()).unwrap();
     let robot = game_state.get_robot_for_current_round_by_player_id_and_robot_id(&player_name, &Uuid::parse_str(&robot_id).unwrap()).unwrap();
-    HttpResponse::Ok().body(serde_json::to_string(robot).unwrap())
+    HttpResponse::Ok().json(robot)
 }
 
 
@@ -574,6 +576,7 @@ async fn get_player_state_for_current_round(path: web::Path<(String, String)>, r
         current_round: u16,
         player_name: String,
         money: u32,
+        total_money_made: u32,
         visited_planets: HashMap<Uuid, &'a Planet>,
         // PlanetId -> Planet
         alive_robots: HashMap<Uuid, &'a Robot>,
@@ -587,6 +590,7 @@ async fn get_player_state_for_current_round(path: web::Path<(String, String)>, r
         current_round: game_state.current_round,
         player_name: player_state.player_name.clone(),
         money: player_state.money.amount,
+        total_money_made: player_state.total_money_made.amount,
         visited_planets: player_state.visited_planets.iter().map(|(&planet_id)| {
             let (x, y) = game_state.round_states[&game_state.current_round].map.indices.get(&planet_id).expect("Planet not found in indices");
             let planet = game_state.round_states[&game_state.current_round].map.planets[*x][*y].as_ref().unwrap();

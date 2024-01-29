@@ -15,6 +15,7 @@ pub fn handle_selling_commands(game_state: &mut GameState) {
             }
 
             let money = &mut player.money;
+            let total_money_made = &mut player.total_money_made;
             for command in selling_commands.drain(..) {
                 let robot_id = command.command_object.robot_id
                     .expect("Robot id was missing in selling command");
@@ -34,6 +35,7 @@ pub fn handle_selling_commands(game_state: &mut GameState) {
                     error!("Robot with id {} has an empty inventory and tried to sell!", robot_id);
                     continue;
                 }
+                total_money_made.amount += resource_values;
                 money.amount += resource_values;
                 robot.inventory.clear();
             }

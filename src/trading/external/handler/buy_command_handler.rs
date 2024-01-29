@@ -100,7 +100,7 @@ pub fn handle_buy_commands(game_state: &mut GameState) {
                         money.amount -= item_cost;
                         match item {
                             Item::Robot(amount) => {
-                                //choose random planet on map and spawn robot there
+                                //choose random planet which is not empty on map and spawn robot there
                                 for _ in 0..amount {
                                     let rand = rand::random::<usize>() % map.indices.len();
                                     let planet_id = map.indices.keys().nth(rand).expect("Planet Index not found, probably out of bounds");
