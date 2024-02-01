@@ -121,6 +121,18 @@ impl GameState {
         None
     }
 
+    pub fn get_enemy_robots_for_current_round(&self, own_player_name: &str) -> Option<Vec<&Robot>> {
+        if let Some(round_state) = self.round_states.get(&self.current_round) {
+            let enemy_robots: Vec<&Robot> = round_state.player_name_player_map.values()
+                .filter(|player| player.player_name != own_player_name)
+                .flat_map(|player| player.robots.values())
+                .collect();
+            Some(enemy_robots)
+        } else {
+            None
+        }
+    }
+
 
     pub fn get_robots_for_current_round_by_robot_id(&mut self, robot_id: &Uuid) -> Option<&mut HashMap<Uuid, Robot>> {
         if let Some(round_state) = self.round_states.get_mut(&self.current_round) {

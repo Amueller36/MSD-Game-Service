@@ -3,6 +3,7 @@ use std::future::Future;
 use std::time::Duration;
 
 use actix_web::{HttpResponse, Responder, web};
+use actix_web::http::header::{CONTENT_TYPE, ContentEncoding, ContentType};
 use mobc::Pool;
 use mobc_redis::redis::AsyncCommands;
 use mobc_redis::RedisConnectionManager;
@@ -101,7 +102,7 @@ async fn create_game(body: web::Json<CreateGameRequestBody>, redis_client: web::
     //save game to redis
     let mut con = redis_client.get().await.expect("Failed to get Redis connection from pool");
     let _: () = con.set(format!("games/{}", game_id.to_string()), serde_json::to_string(&new_game).unwrap()).await.expect("Failed to set key");
-    return HttpResponse::Created().body(json!({
+    return HttpResponse::Created().insert_header(ContentType::json()).body(json!({
         "game_id": game_id
     }).to_string());
 }
@@ -113,7 +114,7 @@ async fn delete_game(path: web::Path<String>, redis_client: web::Data<Pool<Redis
         {
             let mut con = redis_client.get().await.expect("Failed to get Redis connection from pool");
             let _: () = con.del(format!("games/{}", &game_id)).await.expect("Failed to delete key");
-            return Some(HttpResponse::Ok().body(json!({
+            return Some(HttpResponse::Ok().insert_header(ContentType::json()).body(json!({
                 "game_id": game_id
             }).to_string()));
         }
@@ -177,7 +178,7 @@ async fn get_all_created_games(redis_client: web::Data<Pool<RedisConnectionManag
     if created_games_states.is_empty() {
         return HttpResponse::NotFound().body("No games found");
     }
-    HttpResponse::Ok().body(serde_json::to_string(&created_games_states).unwrap())
+    HttpResponse::Ok().json(created_games_states)
 }
 
 #[actix_web::get("/games/{game_id}")]
@@ -244,7 +245,7 @@ async fn get_players(path: web::Path<String>, redis_client: web::Data<Pool<Redis
     let mut con = redis_client.get().await.expect("Failed to get Redis connection from pool");
     let game: String = con.get(format!("games/{}", &game_id)).await.expect(format!("Failed to get game {}", game_id).as_str());
     let game_state: GameState = serde_json::from_str(game.as_str()).unwrap();
-    return HttpResponse::Ok().body(json!({
+    return HttpResponse::Ok().insert_header(ContentType::json()).body(json!({
         "participating_players": game_state.participating_players
     }).to_string());
 }
@@ -282,6 +283,9 @@ async fn join_game(body: web::Json<JoinGameRequestBody>, path: web::Path<String>
             if game_state.status != GameStatus::Created {
                 return Some(HttpResponse::BadRequest().body(format!("Game {} can't be joined because it is currently in status {:?}", &game_id, &game_state.status)));
             }
+            if game_state.participating_players.contains(&body.player_name) {
+                return Some(HttpResponse::BadRequest().body(format!("Game {} can't be joined because player {} has already joined", &game_id, &body.player_name)));
+            }
             game_state.participating_players.push(player.player_name.clone());
             let round_state = game_state.round_states.get_mut(&0).unwrap();
             round_state.player_name_player_map.insert(body.player_name.to_string(), player);
@@ -289,7 +293,7 @@ async fn join_game(body: web::Json<JoinGameRequestBody>, path: web::Path<String>
             if !is_write_successful {
                 return Some(HttpResponse::InternalServerError().body(format!("Failed to write game {} to Redis", &game_id)));
             }
-            return Some(HttpResponse::Ok().body(json!({
+            return Some(HttpResponse::Ok().insert_header(ContentType::json()).body(json!({
                 "player_name" : body.player_name,
                 "game_id": game_id,
                 "money": starting_money,
@@ -404,7 +408,7 @@ async fn start_game(path: web::Path<String>, redis_client: web::Data<Pool<RedisC
             if !is_write_successful {
                 return Some(HttpResponse::InternalServerError().body(format!("Failed to write game {} to Redis", &game_id)));
             }
-            return Some(HttpResponse::Ok().body(json!({
+            return Some(HttpResponse::Ok().insert_header(ContentType::json()).body(json!({
                 "game_id": game_id,
                 "game_status": game_state.status,
             }).to_string()));
@@ -428,7 +432,7 @@ async fn end_game(path: web::Path<String>, redis_client: web::Data<Pool<RedisCon
             if !is_write_successful {
                 return Some(HttpResponse::InternalServerError().body(format!("Failed to write game {} to Redis", &game_id)));
             }
-            return Some(HttpResponse::Ok().body(json!({
+            return Some(HttpResponse::Ok().insert_header(ContentType::json()).body(json!({
                 "game_id": game_id,
                 "game_status": game_state.status,
             }).to_string()));
@@ -445,6 +449,7 @@ fn all_players_submitted_commands(game_state: &GameState) -> bool {
         let player_without_robots_has_buying_command = player.robots.is_empty() && player.commands.values().any(|commands| commands.iter().any(|command| command.command_type == CommandType::BUYING));
 
         let mut robot_ids_for_player = player.robots.keys().clone().collect::<HashSet<&Uuid>>();
+        let robot_amount = robot_ids_for_player.len();
 
         //When a player has no robots, he needs to submit atleast one Buying Robot Command.
         //If he has robots, he needs to submit atleast one command for each alive robot that he owns.
@@ -457,7 +462,7 @@ fn all_players_submitted_commands(game_state: &GameState) -> bool {
                 }
             }
         }
-        let player_with_robots_has_commands_for_every_robot = robot_ids_for_player.is_empty();
+        let player_with_robots_has_commands_for_every_robot = robot_ids_for_player.is_empty() && robot_amount > 0;
 
         info!("Player {} has commands: {}, player_without_robots_has_buying_command: {}, player_with_robots_has_commands_for_every_robot: {} Number left in set: {}", player.player_name, player_has_commands, player_without_robots_has_buying_command, player_with_robots_has_commands_for_every_robot, robot_ids_for_player.len());
 
@@ -518,7 +523,7 @@ async fn handle_batch_of_commands(mut body: web::Json<Vec<Command>>, path: web::
         let round_state = game_state.round_states.get_mut(&current_round).unwrap();
         let player = round_state.player_name_player_map.get_mut(&player_name).unwrap();
         if player.commands.values().any(|commands| !commands.is_empty()) {
-            error!("Overwriting commands for player {}, before : {:?} ", player.player_name, player.commands);
+            eprintln!("Overwriting commands for player {}, before : {:?} ", player.player_name, player.commands);
             player.commands.clear();
         }
         for command in commands {
@@ -532,9 +537,14 @@ async fn handle_batch_of_commands(mut body: web::Json<Vec<Command>>, path: web::
             let game_state = process_commands_for_round(game_state).await.unwrap();
             let is_write_successful: bool = con.set(format!("games/{}", &game_id), serde_json::to_string(&game_state).unwrap()).await.unwrap_or(false);
             if !is_write_successful {
-                return Some(HttpResponse::InternalServerError().body(format!("Failed to write game {} to Redis", &game_id)));
+                return Some(HttpResponse::InternalServerError().body(format!("Failed to save game {} to Redis", &game_id)));
             }
             return Some(HttpResponse::Ok().finish());
+        }
+
+        let is_write_successful: bool = con.set(format!("games/{}", &game_id), serde_json::to_string(&game_state).unwrap()).await.unwrap_or(false);
+        if !is_write_successful {
+            return Some(HttpResponse::InternalServerError().body(format!("Failed to save game {} to Redis", &game_id)));
         }
         return Some(HttpResponse::Ok().body("Waiting for other players to submit commands"));
     })
@@ -570,6 +580,7 @@ async fn get_player_state_for_current_round(path: web::Path<(String, String)>, r
     let game: String = con.get(format!("games/{}", &game_id)).await.expect(&format!("Failed to get game {}", &game_id));
     let game_state: GameState = serde_json::from_str(&game).unwrap();
     let player_state = game_state.get_player_for_current_round(&player_name).unwrap();
+    let enemy_robots = game_state.get_enemy_robots_for_current_round(&player_name).unwrap_or_else(|| Vec::new());
 
     #[derive(serde::Serialize)]
     struct PlayerStateDto<'a> {
@@ -580,6 +591,7 @@ async fn get_player_state_for_current_round(path: web::Path<(String, String)>, r
         visited_planets: HashMap<Uuid, &'a Planet>,
         // PlanetId -> Planet
         alive_robots: HashMap<Uuid, &'a Robot>,
+        alive_enemy_robots: Vec<&'a Robot>,
         // YourRobotId -> YOurRobot
         dead_robots: HashMap<Uuid, &'a Robot>,
         // YOurRobotId -> YOurRobot
@@ -597,6 +609,7 @@ async fn get_player_state_for_current_round(path: web::Path<(String, String)>, r
             (planet_id, planet)
         }).collect(),
         alive_robots: player_state.robots.iter().filter(|(_, robot)| robot.is_alive()).map(|(&robot_id, robot)| (robot_id, robot)).collect(),
+        alive_enemy_robots: enemy_robots.iter().filter(|robot| robot.is_alive()).map(|robot| *robot).collect(),
         dead_robots: player_state.robots.iter().filter(|(_, robot)| !robot.is_alive()).map(|(&robot_id, robot)| (robot_id, robot)).collect(),
         killed_robots: &player_state.killed_robots,
     };
