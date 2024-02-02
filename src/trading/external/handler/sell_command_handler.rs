@@ -30,7 +30,7 @@ pub fn handle_selling_commands(game_state: &mut GameState) {
                     error!("Robot with id {} has an empty inventory and cannot sell", robot_id);
                     continue;
                 }
-                let resource_values = robot.get_inventory_value();
+                let resource_values = robot.get_storage_value();
                 if resource_values == 0 {
                     error!("Robot with id {} has an empty inventory and tried to sell!", robot_id);
                     continue;

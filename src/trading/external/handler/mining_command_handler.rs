@@ -63,7 +63,7 @@ pub fn handle_mining_commands(game_state: &mut GameState) {
                 let minable_resources_of_robot = RobotLevels::get_mineable_resoures(&robot.levels);
                 let mut target_planet = map.get_planet_as_mut(&target_planet_id).expect("Target planet not found");
                 if robot.planet_id == target_planet_id {
-                    if robot.is_inventory_full() {
+                    if robot.is_storage_full() {
                         info!("Robot {} has a full inventory and cannot mine", robot_id);
                     } else {
                         let mining_amount_for_level = robot.levels.get_mining_speed_for_level();

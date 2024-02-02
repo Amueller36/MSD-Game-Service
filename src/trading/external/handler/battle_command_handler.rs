@@ -24,6 +24,11 @@ pub async fn calculate_damage_for_round(game_state: &mut GameState) -> Vec<Damag
 
                 player.robots.get(&attacker_id).and_then(|attacker_robot| {
                     if attacker_robot.is_alive() {
+                        let energy_needed_for_attack = attacker_robot.levels.damage_level.get_int_value() + 1;
+                        if attacker_robot.energy < energy_needed_for_attack {
+                            error!("Robot {} with id {} does not have enough energy to attack", &player.player_name, &attacker_id);
+                            return None;
+                        }
                         let attacker_damage = attacker_robot.levels.get_damage_for_level();
                         Some(DamageReport {
                             attacker_id,
@@ -40,15 +45,26 @@ pub async fn calculate_damage_for_round(game_state: &mut GameState) -> Vec<Damag
         })
     }).collect()
 }
+
 pub fn apply_damage_for_round(damage_reports: Vec<DamageReport>, game_state: &mut GameState) {
     pub struct KillReport {
         pub attacker_robot_id: Uuid,
         pub attacker_name: String,
         pub player_name_whose_robot_got_killed: String,
-        pub killed_robot : Robot
+        pub killed_robot: Robot,
     }
     let mut kill_reports = Vec::new();
     for damage_report in damage_reports {
+        if let Some(attackers_robots) = game_state.get_robots_for_current_round_by_robot_id(&damage_report.attacker_id) {
+            if let Some(attacker_robot) = attackers_robots.get_mut(&damage_report.attacker_id) {
+                let energy_cost_for_attack = attacker_robot.levels.damage_level.get_int_value() + 1;
+                attacker_robot.energy -= energy_cost_for_attack
+            } else {
+                error!("Attacker robot not found for ID {}", damage_report.attacker_id);
+            }
+        } else {
+            error!("Attacker robot not found for ID {}", damage_report.attacker_id);
+        }
         if let Some((target_robot, target_player_name)) = game_state.get_robot_and_playername_for_current_round_by_robot_id(&damage_report.defender_id) {
             target_robot.take_damage(damage_report.damage_to_take);
             if !target_robot.is_alive() {
@@ -57,7 +73,7 @@ pub fn apply_damage_for_round(damage_reports: Vec<DamageReport>, game_state: &mu
                     attacker_name: damage_report.attacker_name.clone(),
                     attacker_robot_id: damage_report.attacker_id,
                     player_name_whose_robot_got_killed: target_player_name.clone(),
-                    killed_robot: target_robot.clone() // Consider avoiding clone
+                    killed_robot: target_robot.clone(), // Consider avoiding clone
                 });
             }
         } else {

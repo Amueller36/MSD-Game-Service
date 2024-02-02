@@ -9,6 +9,18 @@ pub enum RobotLevel {
     LEVEL4,
     LEVEL5,
 }
+impl RobotLevel {
+    pub fn get_int_value(&self) -> u32 {
+        match self {
+            RobotLevel::LEVEL0 => 0,
+            RobotLevel::LEVEL1 => 1,
+            RobotLevel::LEVEL2 => 2,
+            RobotLevel::LEVEL3 => 3,
+            RobotLevel::LEVEL4 => 4,
+            RobotLevel::LEVEL5 => 5,
+        }
+    }
+}
 
 impl Default for RobotLevel {
     fn default() -> Self {

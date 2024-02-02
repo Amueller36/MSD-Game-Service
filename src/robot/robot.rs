@@ -36,7 +36,7 @@ impl Robot {
     pub fn is_alive(&self) -> bool {
         self.health > 0
     }
-    pub fn is_inventory_full(&self) -> bool {
+    pub fn is_storage_full(&self) -> bool {
         self.get_free_storage_space() == 0
     }
 
@@ -52,7 +52,7 @@ impl Robot {
         }
     }
 
-    pub fn get_inventory_value(&self) -> u32 {
+    pub fn get_storage_value(&self) -> u32 {
         let mut inventory_value = 0;
         for (resource, amount) in &self.inventory {
             inventory_value += resource.get_selling_value() * amount;
@@ -81,5 +81,13 @@ impl Robot {
         } else {
             self.health = 0;
         }
+    }
+
+    pub fn get_fighting_score(&self) -> f32 {
+        (self.energy as f32) / ((self.levels.damage_level.get_int_value() + 1) as f32) //TODO: Bessere Fighting Score Berechnung
+    }
+
+    pub fn get_mineable_resources(&self) -> Vec<Resource> {
+        self.levels.get_mineable_resoures()
     }
 }
