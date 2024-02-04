@@ -52,6 +52,10 @@ impl Robot {
         }
     }
 
+    pub fn get_used_storage_space(&self) -> u32 {
+        self.inventory.iter().fold(0, |acc, (_, amount)| acc + amount)
+    }
+
     pub fn get_storage_value(&self) -> u32 {
         let mut inventory_value = 0;
         for (resource, amount) in &self.inventory {

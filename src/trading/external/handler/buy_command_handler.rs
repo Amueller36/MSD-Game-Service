@@ -5,6 +5,7 @@ use crate::game::game_state::GameState;
 use crate::robot::robot::Robot;
 use crate::robot::robot_level::RobotLevel;
 use crate::robot::robot_levels::RobotLevels;
+use crate::robot::robot_stats::RobotStats;
 use crate::trading::external::command_type::CommandType;
 
 pub fn handle_buy_commands(game_state: &mut GameState) {
@@ -90,6 +91,7 @@ pub fn handle_buy_commands(game_state: &mut GameState) {
                                 }
                             }
                         }
+                        robot.stats = RobotStats::from_robot_levels(&robot.levels); //When an Upgrade is bought, the stats of the robot are updated
                     }
                     UpgradeOrItem::Item(item) => {
                         let item_cost = item.get_cost();
