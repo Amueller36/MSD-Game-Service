@@ -34,6 +34,7 @@ pub struct RoundState {
     pub map: GameMap,
 }
 
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct GameMap {
     pub planets: Vec<Vec<Option<Planet>>>,

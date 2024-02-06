@@ -3,20 +3,21 @@ use std::future::Future;
 use std::time::Duration;
 
 use actix_web::{HttpResponse, Responder, web};
-use actix_web::http::header::{CONTENT_TYPE, ContentEncoding, ContentType};
-use actix_web::web::resource;
+use actix_web::http::header::{ContentType};
 use mobc::Pool;
 use mobc_redis::redis::AsyncCommands;
 use mobc_redis::RedisConnectionManager;
 use rayon::prelude::*;
 use redis::Commands;
+use serde::{Serialize};
 use serde_json::json;
 use tokio::time::sleep;
 use tracing::error;
 use tracing::log::info;
 use uuid::Uuid;
 
-use crate::game::game_state::{GameMap, GameState, GameStatus};
+use crate::game::game_state::{GameMap, GameState, GameStatus, RoundState};
+use crate::planet::direction::Direction;
 use crate::planet::map_generator::MapGenerator;
 use crate::planet::planet::Planet;
 use crate::planet::resource::Resource;
@@ -52,9 +53,82 @@ pub fn game_routes(cfg: &mut web::ServiceConfig) {
         .service(get_robots_for_current_round)
         .service(get_robot_for_current_round_by_player_id_and_robot_id)
         .service(get_player_state_for_current_round)
-        .service(get_player_state_for_current_round_with_xy_for_planets);
+        .service(get_player_state_for_current_round_with_xy_for_planets)
+        .service(handle_batch_of_commands_hypothetically);
 }
 
+#[derive(serde::Serialize, Clone)]
+struct PlanetPlayerDto {
+    // View of a Planet from a players perspective
+    x: usize,
+    y: usize,
+    movement_difficulty: u8,
+    resource: Option<Resource>,
+    resource_amount: u32,
+    amount_of_friendly_robots: u16,
+    fighting_score_friendly_robots: f32,
+    amount_of_enemy_robots: u16,
+    fighting_score_enemy_robots: f32,
+    neighbours: HashMap<Direction, Uuid>,
+}
+
+#[derive(serde::Serialize, Clone)]
+struct PlanetDto {
+    x: usize,
+    y: usize,
+    movement_difficulty: u8,
+    resource: Option<Resource>,
+    resource_amount: u32,
+    amount_of_friendly_robots: u16,
+    fighting_score_friendly_robots: f32,
+    amount_of_enemy_robots: u16,
+    fighting_score_enemy_robots: f32,
+    neighbours: HashMap<Direction, Uuid>,
+}
+
+#[derive(serde::Serialize, Clone)]
+struct RobotDto {
+    x: usize,
+    y: usize,
+    planet_id: Uuid,
+    robot_id: Uuid,
+    health: u32,
+    max_health: u32,
+    energy: u32,
+    max_energy: u32,
+    energy_regen: u32,
+    storage: u32,
+    max_storage: u32,
+    mining_speed: u32,
+    mineable_resources: Vec<Resource>,
+    damage: u32,
+    fighting_score: f32,
+}
+
+#[derive(serde::Serialize, Clone)]
+struct PlayerStateDto {
+    current_round: u16,
+    player_name: String,
+    money: u32,
+    total_money_made: u32,
+    map: HashMap<Uuid, PlanetPlayerDto>,
+    //(x,y) -> PlanetDto
+    visited_planets:  HashSet<Uuid>,
+    // PlanetId -> Planet
+    alive_robots: HashMap<Uuid, RobotDto>,
+    alive_enemy_robots: HashMap<Uuid, RobotDto>,
+    // YourRobotId -> YOurRobot
+    dead_robots: HashMap<Uuid, RobotDto>,
+    // YOurRobotId -> YOurRobot
+    killed_robots: HashMap<Uuid, (String, RobotDto)>, // YOurRobotId -> (EnemyPlayerName, EnemyRobot)
+}
+
+#[derive(Serialize, Clone)]
+pub struct RoundStateDto {
+    pub round_number: u16,
+    pub player_name_player_map: HashMap<String, PlayerStateDto>,
+    pub map: HashMap<Uuid, PlanetPlayerDto>,
+}
 
 async fn with_game_lock<F, Fut>(redis_client: &web::Data<Pool<RedisConnectionManager>>, game_id: &String, action: F) -> Option<HttpResponse>
     where
@@ -127,11 +201,11 @@ async fn delete_game(path: web::Path<String>, redis_client: web::Data<Pool<Redis
 #[actix_web::get("/games")]
 async fn get_all_games(redis_client: web::Data<Pool<RedisConnectionManager>>) -> impl Responder {
     let mut con = redis_client.get().await.map_err(|e| {
-        eprintln!("Failed to get Redis connection: {}", e);
+        error!("Failed to get Redis connection: {}", e);
         HttpResponse::InternalServerError().finish()
     }).expect("Failed to get Redis connection from pool");
     let mut con2 = redis_client.get().await.map_err(|e| {
-        eprintln!("Failed to get Redis connection: {}", e);
+        error!("Failed to get Redis connection: {}", e);
         HttpResponse::InternalServerError().finish()
     }).expect("Failed to get Redis connection from pool");
 
@@ -143,7 +217,6 @@ async fn get_all_games(redis_client: web::Data<Pool<RedisConnectionManager>>) ->
     let mut games_states: Vec<GameState> = Vec::new();
     while let Some(key) = game_ids.next_item().await {
         let game: String = con2.get(&key).await.expect("Failed to get game");
-        info!("{}", game);
         let game_state: GameState = serde_json::from_str(game.as_str()).unwrap();
         games_states.push(game_state);
     }
@@ -156,11 +229,11 @@ async fn get_all_games(redis_client: web::Data<Pool<RedisConnectionManager>>) ->
 #[actix_web::get("/games/created")]
 async fn get_all_created_games(redis_client: web::Data<Pool<RedisConnectionManager>>) -> impl Responder {
     let mut con = redis_client.get().await.map_err(|e| {
-        eprintln!("Failed to get Redis connection: {}", e);
+        error!("Failed to get Redis connection: {}", e);
         HttpResponse::InternalServerError().finish()
     }).expect("Failed to get Redis connection from pool");
     let mut con2 = redis_client.get().await.map_err(|e| {
-        eprintln!("Failed to get Redis connection: {}", e);
+        error!("Failed to get Redis connection: {}", e);
         HttpResponse::InternalServerError().finish()
     }).expect("Failed to get Redis connection from pool");
 
@@ -188,7 +261,7 @@ async fn get_all_created_games(redis_client: web::Data<Pool<RedisConnectionManag
 async fn get_game(path: web::Path<String>, redis_client: web::Data<Pool<RedisConnectionManager>>) -> impl Responder {
     let game_id = path.into_inner();
     let mut con = redis_client.get().await.map_err(|e| {
-        eprintln!("Failed to get Redis connection: {}", e);
+        error!("Failed to get Redis connection: {}", e);
         HttpResponse::InternalServerError().finish()
     }).expect("Failed to get Redis connection from pool");
     let game: String = con.get(format!("games/{}", &game_id)).await.expect(format!("Failed to get game {}", game_id).as_str());
@@ -200,15 +273,35 @@ async fn get_game(path: web::Path<String>, redis_client: web::Data<Pool<RedisCon
 async fn get_game_current_round(path: web::Path<String>, redis_client: web::Data<Pool<RedisConnectionManager>>) -> impl Responder {
     let game_id = path.into_inner();
     let mut con = redis_client.get().await.map_err(|e| {
-        eprintln!("Failed to get Redis connection: {}", e);
+        error!("Failed to get Redis connection: {}", e);
         HttpResponse::InternalServerError().finish()
     }).expect("Failed to get Redis connection from pool");
     let game: String = con.get(format!("games/{}", &game_id)).await.expect(format!("Failed to get game {}", game_id).as_str());
     let game_state: &mut GameState = &mut serde_json::from_str(game.as_str()).unwrap();
     let current_round = game_state.current_round;
-    let round_state = game_state.round_states.get_mut(&current_round).unwrap().clone();
+    let round_state = game_state.round_states.remove(&current_round).unwrap();
     game_state.round_states.clear();
-    game_state.round_states.insert(current_round, round_state.clone());
+    game_state.round_states.insert(current_round, round_state);
+    HttpResponse::Ok().json(game_state)
+}
+
+#[actix_web::get("/games/{game_id}/currentRound/new")]
+async fn get_game_current_round_new(path: web::Path<String>, redis_client: web::Data<Pool<RedisConnectionManager>>) -> impl Responder {
+    let game_id = path.into_inner();
+    let mut con = redis_client.get().await.map_err(|e| {
+        error!("Failed to get Redis connection: {}", e);
+        HttpResponse::InternalServerError().finish()
+    }).expect("Failed to get Redis connection from pool");
+    let game: String = con.get(format!("games/{}", &game_id)).await.expect(format!("Failed to get game {}", game_id).as_str());
+    let game_state: &mut GameState = &mut serde_json::from_str(game.as_str()).unwrap();
+    let current_round: u16 = game_state.current_round;
+    let current_round_state: RoundState = game_state.round_states.remove(&current_round).unwrap();
+
+    //let PlayerStateDto
+
+
+    game_state.round_states.clear();
+    game_state.round_states.insert(current_round, current_round_state.clone());
     HttpResponse::Ok().json(game_state)
 }
 
@@ -216,7 +309,7 @@ async fn get_game_current_round(path: web::Path<String>, redis_client: web::Data
 #[actix_web::delete("/games")]
 async fn delete_all_games(redis_client: web::Data<Pool<RedisConnectionManager>>) -> impl Responder {
     let mut con = redis_client.get().await.map_err(|e| {
-        eprintln!("Failed to get Redis connection: {}", e);
+        error!("Failed to get Redis connection: {}", e);
         HttpResponse::InternalServerError().finish()
     }).expect("Failed to get Redis connection from pool");
 
@@ -526,7 +619,7 @@ async fn handle_batch_of_commands(mut body: web::Json<Vec<Command>>, path: web::
         let round_state = game_state.round_states.get_mut(&current_round).unwrap();
         let player = round_state.player_name_player_map.get_mut(&player_name).unwrap();
         if player.commands.values().any(|commands| !commands.is_empty()) {
-            eprintln!("Overwriting commands for player {}, before : {:?} ", player.player_name, player.commands);
+            error!("Overwriting commands for player {}, before : {:?} ", player.player_name, player.commands);
             player.commands.clear();
         }
         for command in commands {
@@ -620,60 +713,7 @@ async fn get_player_state_for_current_round(path: web::Path<(String, String)>, r
     HttpResponse::Ok().json(player_state_dto)
 }
 
-
-#[actix_web::get("/games/{game_id}/currentRound/players/{player_name}/new")]
-async fn get_player_state_for_current_round_with_xy_for_planets(path: web::Path<(String, String)>, redis_client: web::Data<Pool<RedisConnectionManager>>) -> impl Responder {
-
-    #[derive(serde::Serialize)]
-    struct PlanetDto {
-        x: usize,
-        y: usize,
-        movement_difficulty: u8,
-        resource: Option<Resource>,
-        resource_amount: u32,
-        amount_of_friendly_robots: u16,
-        fighting_score_friendly_robots: f32,
-        amount_of_enemy_robots: u16,
-        fighting_score_enemy_robots: f32,
-    }
-    #[derive(serde::Serialize)]
-    struct RobotDto {
-        x: usize,
-        y: usize,
-        robot_id: Uuid,
-        health: u32,
-        max_health: u32,
-        energy: u32,
-        max_energy: u32,
-        energy_regen: u32,
-        storage: u32,
-        max_storage: u32,
-        mining_speed: u32,
-        mineable_resources: Vec<Resource>,
-        damage: u32,
-        fighting_score: f32,
-    }
-    #[derive(serde::Serialize)]
-    struct PlayerStateDto<'a> {
-        current_round: u16,
-        player_name: String,
-        money: u32,
-        total_money_made: u32,
-        map: HashMap<Uuid, PlanetDto>, //(x,y) -> PlanetDto
-        // PlanetId -> Planet
-        alive_robots: HashMap<Uuid, RobotDto>,
-        alive_enemy_robots: HashMap<Uuid, RobotDto>,
-        // YourRobotId -> YOurRobot
-        dead_robots: HashMap<Uuid, RobotDto>,
-        // YOurRobotId -> YOurRobot
-        killed_robots: &'a HashMap<Uuid, (String, RobotDto)>, // YOurRobotId -> (EnemyPlayerName, EnemyRobot)
-    }
-
-    let (game_id, player_name) = path.into_inner();
-    let mut con = redis_client.get().await.expect("Failed to get Redis connection from pool");
-    let game: String = con.get(format!("games/{}", &game_id)).await.expect(&format!("Failed to get game {} . Maybe a non existent gameid was passed.", &game_id));
-    let game_state: GameState = serde_json::from_str(&game).unwrap();
-
+fn get_player_state_dto_from_gamestate(game_state: GameState, player_name: &str) -> PlayerStateDto {
     let map = &game_state.round_states[&game_state.current_round].map;
 
     let player_state = game_state.get_player_for_current_round(&player_name).unwrap();
@@ -686,8 +726,9 @@ async fn get_player_state_for_current_round_with_xy_for_planets(path: web::Path<
                 x: *x,
                 y: *y,
                 robot_id: *robot_id,
+                planet_id: robot.planet_id,
                 health: robot.health,
-                max_health : robot.levels.get_health_for_level(),
+                max_health: robot.levels.get_health_for_level(),
                 energy: robot.energy,
                 max_energy: robot.levels.get_energy_for_level(),
                 energy_regen: robot.levels.get_energy_regen_for_level(),
@@ -715,8 +756,9 @@ async fn get_player_state_for_current_round_with_xy_for_planets(path: web::Path<
                 x: *x,
                 y: *y,
                 robot_id: robot.robot_id,
+                planet_id: robot.planet_id,
                 health: robot.health,
-                max_health : robot.levels.get_health_for_level(),
+                max_health: robot.levels.get_health_for_level(),
                 energy: robot.energy,
                 max_energy: robot.levels.get_energy_for_level(),
                 energy_regen: robot.levels.get_energy_regen_for_level(),
@@ -736,7 +778,7 @@ async fn get_player_state_for_current_round_with_xy_for_planets(path: web::Path<
         },
     );
     // Compute planet data in parallel
-    let planetMap: HashMap<Uuid, PlanetDto> = map.indices.values().par_bridge().map(|&(x, y)| {
+    let planetMap: HashMap<Uuid, PlanetPlayerDto> = map.indices.values().par_bridge().map(|&(x, y)| {
         let planet = map.planets[x][y].as_ref().unwrap();
         let resource_data = planet.resources.as_ref().map(|(r, a)| (Some(r.clone()), *a)).unwrap_or((None, 0));
 
@@ -745,7 +787,7 @@ async fn get_player_state_for_current_round_with_xy_for_planets(path: web::Path<
         let enemy_count_and_score = alive_enemy_robots.values().filter(|robot| robot.x == x && robot.y == y)
             .fold((0, 0.0), |(count, score), robot| (count + 1, score + robot.fighting_score));
 
-        let planet_dto = PlanetDto {
+        let planet_dto = PlanetPlayerDto {
             x,
             y,
             movement_difficulty: planet.movement_difficulty,
@@ -755,25 +797,28 @@ async fn get_player_state_for_current_round_with_xy_for_planets(path: web::Path<
             fighting_score_friendly_robots: friendly_count_and_score.1,
             amount_of_enemy_robots: enemy_count_and_score.0 as u16,
             fighting_score_enemy_robots: enemy_count_and_score.1,
+            neighbours: planet.neighbours.clone(),
         };
         (planet.planet_id, planet_dto)
     }).collect();
 
-    let player_state_dto = PlayerStateDto {
+    PlayerStateDto {
         current_round: game_state.current_round,
         player_name: player_state.player_name.clone(),
         money: player_state.money.amount,
         total_money_made: player_state.total_money_made.amount,
         map: planetMap,
+        visited_planets: player_state.clone().visited_planets,
         alive_robots: alive_robots,
         alive_enemy_robots: alive_enemy_robots,
         dead_robots: dead_robots,
-        killed_robots: &player_state.killed_robots.iter().map(|(robot_id, (enemy_player_name, robot))| {
+        killed_robots: player_state.killed_robots.iter().map(|(robot_id, (enemy_player_name, robot))| {
             let (x, y) = map.indices.get(&robot.planet_id).expect("Planet not found in indices");
             let robot_dto = RobotDto {
                 x: *x,
                 y: *y,
                 robot_id: *robot_id,
+                planet_id: robot.planet_id,
                 health: robot.health,
                 max_health: robot.levels.get_health_for_level(),
                 energy: robot.energy,
@@ -787,8 +832,61 @@ async fn get_player_state_for_current_round_with_xy_for_planets(path: web::Path<
                 fighting_score: robot.get_fighting_score(),
             };
             (*robot_id, (enemy_player_name.clone(), robot_dto))
-        }).collect(),
-    };
+        }).collect::<HashMap<Uuid,(String,RobotDto)>>().clone(),
+    }
+}
 
+#[actix_web::get("/games/{game_id}/currentRound/players/{player_name}/new")]
+async fn get_player_state_for_current_round_with_xy_for_planets(path: web::Path<(String, String)>, redis_client: web::Data<Pool<RedisConnectionManager>>) -> impl Responder {
+    let (game_id, player_name) = path.into_inner();
+    let mut con = redis_client.get().await.expect("Failed to get Redis connection from pool");
+    let game: String = con.get(format!("games/{}", &game_id)).await.expect(&format!("Failed to get game {} . Maybe a non existent gameid was passed.", &game_id));
+    let game_state: GameState = serde_json::from_str(&game).unwrap();
+    let player_state_dto = get_player_state_dto_from_gamestate(game_state, &player_name);
     HttpResponse::Ok().json(player_state_dto)
+}
+
+
+#[actix_web::post("/games/{game_id}/commands/hypothetically")]
+async fn handle_batch_of_commands_hypothetically(mut body: web::Json<Vec<Command>>, path: web::Path<String>, redis_client: web::Data<Pool<RedisConnectionManager>>) -> impl Responder {
+    /*
+    Commands are executed in the following order:
+    1. Trading
+    2. Moving
+    3. Repairing (Buying a health or energy restore)
+    4. Battleing (only possible when on same planet)
+    5. Mining
+    6. Regenerating
+     */
+    if body.0.is_empty() {
+        return HttpResponse::BadRequest().body("No commands found");
+    }
+
+    let game_id = path.into_inner();
+    let player_name = body.get(0).unwrap().player_name.clone();
+    let commands = body.0;
+
+
+    let mut con = redis_client.get().await.expect("Failed to get Redis connection from pool");
+    let game: String = con.get(format!("games/{}", &game_id)).await.expect(format!("Failed to get game {}", game_id).as_str());
+    let mut game_state: GameState = serde_json::from_str(game.as_str()).unwrap();
+    if game_state.status != GameStatus::Started {
+        return HttpResponse::BadRequest().body(format!("Game {} can't take commands because it is currently in status {:?}", &game_id, &game_state.status));
+    }
+    let current_round = game_state.current_round;
+    let round_state = game_state.round_states.get_mut(&current_round).unwrap();
+    let player = round_state.player_name_player_map.get_mut(&player_name).unwrap();
+    if player.commands.values().any(|commands| !commands.is_empty()) {
+        error!("Overwriting commands for player {}, before : {:?} ", player.player_name, player.commands);
+        player.commands.clear();
+    }
+    for command in commands {
+        player.commands.entry(command.command_type)
+            .or_insert_with(VecDeque::new)
+            .push_back(command);
+    }
+    info!("Player {} submitted commands: {:?}", player.player_name, player.commands);
+    let game_state = process_commands_for_round(game_state).await.unwrap();
+    let player_state_dto = get_player_state_dto_from_gamestate(game_state, &player_name);
+    return HttpResponse::Ok().json(player_state_dto);
 }
