@@ -94,7 +94,7 @@ impl Robot {
     }
 
     pub fn take_damage(&mut self, amount: u32) {
-        if self.health - amount > 0 {
+        if self.health > 0  && amount <= self.health {
             self.health -= amount;
         } else {
             self.health = 0;

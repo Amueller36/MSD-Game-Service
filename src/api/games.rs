@@ -115,14 +115,14 @@ struct PlayerStateDto {
     total_money_made: u32,
     map: HashMap<Uuid, PlanetPlayerDto>,
     //(x,y) -> PlanetDto
-    visited_planets:  HashSet<Uuid>,
+    visited_planets: HashSet<Uuid>,
     // PlanetId -> Planet
     alive_robots: HashMap<Uuid, RobotDto>,
     alive_enemy_robots: HashMap<Uuid, RobotDto>,
     // YourRobotId -> YOurRobot
     dead_robots: HashMap<Uuid, RobotDto>,
     // YOurRobotId -> YOurRobot
-    killed_robots: HashMap<Uuid, (String, RobotDto)>, // YOurRobotId -> (EnemyPlayerName, EnemyRobot)
+    killed_robots: HashMap<Uuid, Vec<(String, RobotDto)>>, // YOurRobotId -> (EnemyPlayerName, EnemyRobot)
 }
 
 #[derive(Serialize, Clone)]
@@ -546,8 +546,11 @@ fn all_players_submitted_commands(game_state: &GameState) -> bool {
         let player_has_commands = player.commands.values().any(|commands| !commands.is_empty());
         let player_without_robots_has_buying_command = player.robots.is_empty() && player.commands.values().any(|commands| commands.iter().any(|command| command.command_type == CommandType::BUYING));
 
-        let mut robot_ids_for_player = player.robots.keys().clone().collect::<HashSet<&Uuid>>();
-        let robot_amount = robot_ids_for_player.len();
+        let mut alive_robot_ids_for_player = player.robots
+            .iter()
+            .filter_map(|(&robot_id, robot)| if robot.is_alive() { Some(robot_id) } else { None })
+            .collect::<HashSet<Uuid>>();
+        let alive_robot_amount = alive_robot_ids_for_player.len();
 
         //When a player has no robots, he needs to submit atleast one Buying Robot Command.
         //If he has robots, he needs to submit atleast one command for each alive robot that he owns.
@@ -556,13 +559,13 @@ fn all_players_submitted_commands(game_state: &GameState) -> bool {
             for command in command_queue.iter() {
                 if let Some(robot_id) = command.command_object.robot_id {
                     //Remove robot_id from robot_ids_for_player
-                    robot_ids_for_player.remove(&robot_id);
+                    alive_robot_ids_for_player.remove(&robot_id);
                 }
             }
         }
-        let player_with_robots_has_commands_for_every_robot = robot_ids_for_player.is_empty() && robot_amount > 0;
+        let player_with_robots_has_commands_for_every_robot = alive_robot_ids_for_player.is_empty() && alive_robot_amount > 0;
 
-        info!("Player {} has commands: {}, player_without_robots_has_buying_command: {}, player_with_robots_has_commands_for_every_robot: {} Number left in set: {}", player.player_name, player_has_commands, player_without_robots_has_buying_command, player_with_robots_has_commands_for_every_robot, robot_ids_for_player.len());
+        info!("Player {} has commands: {}, player_without_robots_has_buying_command: {}, player_with_robots_has_commands_for_every_robot: {} Number left in set: {}", player.player_name, player_has_commands, player_without_robots_has_buying_command, player_with_robots_has_commands_for_every_robot, alive_robot_ids_for_player.len());
 
         player_has_commands && (player_without_robots_has_buying_command || player_with_robots_has_commands_for_every_robot)
     })
@@ -639,7 +642,7 @@ async fn handle_batch_of_commands(mut body: web::Json<Vec<Command>>, path: web::
 
             for player in game_state.round_states.get(&game_state.current_round).unwrap().player_name_player_map.values() {
                 // Wenn der Spieler keine ALIVE Robots mehr hat und kein Geld sich neue zu kaufen, dann kann er sich keine Roboter leisten
-                let no_robots_alive = player.robots.iter().all(|robot| !robot.1.is_alive());
+                let no_robots_alive = player.robots.par_iter().all(|robot| !robot.1.is_alive());
                 if no_robots_alive && player.money.amount < Item::Robot(1).get_cost() {
                     cannot_afford_robot_count += 1;
                     info!("Player {} has no robots and can't afford to buy a new robot. HE LOST!", player.player_name);
@@ -691,47 +694,51 @@ async fn get_robot_for_current_round_by_player_id_and_robot_id(path: web::Path<(
 #[actix_web::get("/games/{game_id}/currentRound/players/{player_name}")]
 async fn get_player_state_for_current_round(path: web::Path<(String, String)>, redis_client: web::Data<Pool<RedisConnectionManager>>) -> impl Responder {
     let (game_id, player_name) = path.into_inner();
-    let mut con = redis_client.get().await.expect("Failed to get Redis connection from pool");
-    let game: String = con.get(format!("games/{}", &game_id)).await.expect(&format!("Failed to get game {} . Maybe a non existent gameid was passed.", &game_id));
-    let game_state: GameState = serde_json::from_str(&game).unwrap();
-    let player_state = game_state.get_player_for_current_round(&player_name).unwrap();
-    let enemy_robots = game_state.get_enemy_robots_for_current_round(&player_name).unwrap_or_else(|| Vec::new());
+    with_game_lock(&redis_client, &game_id, || async {
+        {
+            let mut con = redis_client.get().await.expect("Failed to get Redis connection from pool");
+            let game: String = con.get(format!("games/{}", &game_id)).await.expect(&format!("Failed to get game {} . Maybe a non existent gameid was passed.", &game_id));
+            let game_state: GameState = serde_json::from_str(&game).unwrap();
+            let player_state = game_state.get_player_for_current_round(&player_name).unwrap();
+            let enemy_robots = game_state.get_enemy_robots_for_current_round(&player_name).unwrap_or_else(|| Vec::new());
 
-    #[derive(serde::Serialize)]
-    struct PlayerStateDto<'a> {
-        current_round: u16,
-        player_name: String,
-        money: u32,
-        total_money_made: u32,
-        visited_planets: HashMap<Uuid, &'a Planet>,
-        // PlanetId -> Planet
-        alive_robots: HashMap<Uuid, &'a Robot>,
-        alive_enemy_robots: Vec<&'a Robot>,
-        // YourRobotId -> YOurRobot
-        dead_robots: HashMap<Uuid, &'a Robot>,
-        // YOurRobotId -> YOurRobot
-        killed_robots: &'a HashMap<Uuid, (String, Robot)>, // YOurRobotId -> (EnemyPlayerName, EnemyRobot)
-    }
+            #[derive(serde::Serialize)]
+            struct PlayerStateDto<'a> {
+                current_round: u16,
+                player_name: String,
+                money: u32,
+                total_money_made: u32,
+                visited_planets: HashMap<String, &'a Planet>,
+                // PlanetId -> Planet
+                alive_robots: HashMap<String, &'a Robot>,
+                alive_enemy_robots: Vec<&'a Robot>,
+                // YourRobotId -> YOurRobot
+                dead_robots: HashMap<String, &'a Robot>,
+                // YOurRobotId -> YOurRobot
+                killed_robots: &'a HashMap<String, Vec<(String, Robot)>>, // YOurRobotId -> (EnemyPlayerName, EnemyRobot)
+            }
 
-    let player_state_dto = PlayerStateDto {
-        current_round: game_state.current_round,
-        player_name: player_state.player_name.clone(),
-        money: player_state.money.amount,
-        total_money_made: player_state.total_money_made.amount,
-        visited_planets: player_state.visited_planets.iter().map(|(&planet_id)| {
-            let (x, y) = game_state.round_states[&game_state.current_round].map.indices.get(&planet_id).expect("Planet not found in indices");
-            let planet = game_state.round_states[&game_state.current_round].map.planets[*x][*y].as_ref().unwrap();
-            (planet_id, planet)
-        }).collect(),
-        alive_robots: player_state.robots.iter().filter(|(_, robot)| robot.is_alive()).map(|(&robot_id, robot)| (robot_id, robot)).collect(),
-        alive_enemy_robots: enemy_robots.iter().filter(|robot| robot.is_alive()).map(|robot| *robot).collect(),
-        dead_robots: player_state.robots.iter().filter(|(_, robot)| !robot.is_alive()).map(|(&robot_id, robot)| (robot_id, robot)).collect(),
-        killed_robots: &player_state.killed_robots,
-    };
-
-    HttpResponse::Ok().json(player_state_dto)
+            let player_state_dto = PlayerStateDto {
+                current_round: game_state.current_round,
+                player_name: player_state.player_name.clone(),
+                money: player_state.money.amount,
+                total_money_made: player_state.total_money_made.amount,
+                visited_planets: player_state.visited_planets.iter().map(|planet_id| {
+                    let (x, y) = game_state.round_states[&game_state.current_round].map.indices.get(planet_id).expect("Planet not found in indices");
+                    let planet = game_state.round_states[&game_state.current_round].map.planets[*x][*y].as_ref().unwrap();
+                    (planet_id.to_string(), planet) // Convert Uuid to String here
+                }).collect(),
+                alive_robots: player_state.robots.iter().filter(|(_, robot)| robot.is_alive()).map(|(&robot_id, robot)| (robot_id.to_string(), robot)).collect(),
+                alive_enemy_robots: enemy_robots.iter().filter(|robot| robot.is_alive()).map(|robot| *robot).collect(),
+                dead_robots: player_state.robots.iter().filter(|(_, robot)| !robot.is_alive()).map(|(&robot_id, robot)| (robot_id.to_string(), robot)).collect(),
+                killed_robots: &player_state.killed_robots.iter().map(|(robot_id, killed_robots)| {
+                    (robot_id.to_string(), killed_robots.iter().map(|(enemy_player_name, enemy_robot)| (enemy_player_name.clone(), enemy_robot.clone())).collect())
+                }).collect(),
+            };
+            Some(HttpResponse::Ok().json(player_state_dto))
+        }
+    }).await.unwrap_or(HttpResponse::InternalServerError().body(format!("Game {game_id} playerstate cant be retrieved")))
 }
-
 fn get_player_state_dto_from_gamestate(game_state: GameState, player_name: &str) -> PlayerStateDto {
     let map = &game_state.round_states[&game_state.current_round].map;
 
@@ -744,7 +751,7 @@ fn get_player_state_dto_from_gamestate(game_state: GameState, player_name: &str)
             let robot_dto = RobotDto {
                 x: *x,
                 y: *y,
-                robot_id: *robot_id,
+                robot_id: robot.robot_id,
                 planet_id: robot.planet_id,
                 health: robot.health,
                 max_health: robot.levels.get_health_for_level(),
@@ -758,7 +765,7 @@ fn get_player_state_dto_from_gamestate(game_state: GameState, player_name: &str)
                 damage: robot.levels.get_damage_for_level(),
                 fighting_score: robot.get_fighting_score(),
                 money_value: robot.get_money_costs_for_robots_existing_upgrades(),
-                money_made: robot.money_made
+                money_made: robot.money_made,
             };
             if robot.health > 0 {
                 alive.insert(*robot_id, robot_dto);
@@ -790,7 +797,7 @@ fn get_player_state_dto_from_gamestate(game_state: GameState, player_name: &str)
                 damage: robot.levels.get_damage_for_level(),
                 fighting_score: robot.get_fighting_score(),
                 money_value: robot.get_money_costs_for_robots_existing_upgrades(),
-                money_made: robot.money_made
+                money_made: robot.money_made,
             };
             if robot.health > 0 {
                 alive.insert(robot.robot_id, robot_dto);
@@ -835,40 +842,49 @@ fn get_player_state_dto_from_gamestate(game_state: GameState, player_name: &str)
         alive_robots: alive_robots,
         alive_enemy_robots: alive_enemy_robots,
         dead_robots: dead_robots,
-        killed_robots: player_state.killed_robots.iter().map(|(robot_id, (enemy_player_name, robot))| {
-            let (x, y) = map.indices.get(&robot.planet_id).expect("Planet not found in indices");
-            let robot_dto = RobotDto {
-                x: *x,
-                y: *y,
-                robot_id: *robot_id,
-                planet_id: robot.planet_id,
-                health: robot.health,
-                max_health: robot.levels.get_health_for_level(),
-                energy: robot.energy,
-                max_energy: robot.levels.get_energy_for_level(),
-                energy_regen: robot.levels.get_energy_regen_for_level(),
-                storage: robot.get_free_storage_space(),
-                max_storage: robot.levels.get_storage_for_level(),
-                mining_speed: robot.levels.get_mining_speed_for_level(),
-                mineable_resources: robot.get_mineable_resources(),
-                damage: robot.stats.damage,
-                fighting_score: robot.get_fighting_score(),
-                money_value: robot.get_money_costs_for_robots_existing_upgrades(),
-                money_made: robot.money_made
-            };
-            (*robot_id, (enemy_player_name.clone(), robot_dto))
-        }).collect::<HashMap<Uuid,(String,RobotDto)>>().clone(),
+        killed_robots: player_state.killed_robots.iter().map(|(robot_id, killed_robots)| {
+            let robot_dtos = killed_robots.iter().map(|(enemy_player_name, robot)|
+                {
+                    let (x, y) = map.indices.get(&robot.planet_id).expect("Planet not found in indices");
+                    let robot_dto = RobotDto {
+                        x: *x,
+                        y: *y,
+                        robot_id: robot.robot_id,
+                        planet_id: robot.planet_id,
+                        health: robot.health,
+                        max_health: robot.levels.get_health_for_level(),
+                        energy: robot.energy,
+                        max_energy: robot.levels.get_energy_for_level(),
+                        energy_regen: robot.levels.get_energy_regen_for_level(),
+                        storage: robot.get_free_storage_space(),
+                        max_storage: robot.levels.get_storage_for_level(),
+                        mining_speed: robot.levels.get_mining_speed_for_level(),
+                        mineable_resources: robot.get_mineable_resources(),
+                        damage: robot.stats.damage,
+                        fighting_score: robot.get_fighting_score(),
+                        money_value: robot.get_money_costs_for_robots_existing_upgrades(),
+                        money_made: robot.money_made,
+                    };
+                    (enemy_player_name.clone(), robot_dto)
+                }).collect::<Vec<(String, RobotDto)>>();
+            (*robot_id, robot_dtos)
+        }).collect::<HashMap<Uuid, Vec<(String, RobotDto)>>>(),
     }
 }
 
 #[actix_web::get("/games/{game_id}/currentRound/players/{player_name}/new")]
 async fn get_player_state_for_current_round_with_xy_for_planets(path: web::Path<(String, String)>, redis_client: web::Data<Pool<RedisConnectionManager>>) -> impl Responder {
     let (game_id, player_name) = path.into_inner();
-    let mut con = redis_client.get().await.expect("Failed to get Redis connection from pool");
-    let game: String = con.get(format!("games/{}", &game_id)).await.expect(&format!("Failed to get game {} . Maybe a non existent gameid was passed.", &game_id));
-    let game_state: GameState = serde_json::from_str(&game).unwrap();
-    let player_state_dto = get_player_state_dto_from_gamestate(game_state, &player_name);
-    HttpResponse::Ok().json(player_state_dto)
+    with_game_lock(&redis_client, &game_id, || async {
+        {
+            let mut con = redis_client.get().await.expect("Failed to get Redis connection from pool");
+            let game: String = con.get(format!("games/{}", &game_id)).await.expect(&format!("Failed to get game {} . Maybe a non existent gameid was passed.", &game_id));
+            let game_state: GameState = serde_json::from_str(&game).unwrap();
+            let player_state_dto = get_player_state_dto_from_gamestate(game_state, &player_name);
+            Some(HttpResponse::Ok().json(player_state_dto))
+        }
+    }).await
+        .unwrap_or(HttpResponse::InternalServerError().body(format!("Game {game_id} experienced some unknown error")))
 }
 
 
@@ -891,27 +907,30 @@ async fn handle_batch_of_commands_hypothetically(mut body: web::Json<Vec<Command
     let player_name = body.get(0).unwrap().player_name.clone();
     let commands = body.0;
 
-
-    let mut con = redis_client.get().await.expect("Failed to get Redis connection from pool");
-    let game: String = con.get(format!("games/{}", &game_id)).await.expect(format!("Failed to get game {}", game_id).as_str());
-    let mut game_state: GameState = serde_json::from_str(game.as_str()).unwrap();
-    if game_state.status != GameStatus::Started {
-        return HttpResponse::BadRequest().body(format!("Game {} can't take commands because it is currently in status {:?}", &game_id, &game_state.status));
-    }
-    let current_round = game_state.current_round;
-    let round_state = game_state.round_states.get_mut(&current_round).unwrap();
-    let player = round_state.player_name_player_map.get_mut(&player_name).unwrap();
-    if player.commands.values().any(|commands| !commands.is_empty()) {
-        error!("Overwriting commands for player {}, before : {:?} ", player.player_name, player.commands);
-        player.commands.clear();
-    }
-    for command in commands {
-        player.commands.entry(command.command_type)
-            .or_insert_with(VecDeque::new)
-            .push_back(command);
-    }
-    info!("Player {} submitted commands: {:?}", player.player_name, player.commands);
-    let game_state = process_commands_for_round(game_state).await.unwrap();
-    let player_state_dto = get_player_state_dto_from_gamestate(game_state, &player_name);
-    return HttpResponse::Ok().json(player_state_dto);
+    with_game_lock(&redis_client, &game_id, || async {
+        {
+            let mut con = redis_client.get().await.expect("Failed to get Redis connection from pool");
+            let game: String = con.get(format!("games/{}", &game_id)).await.expect(format!("Failed to get game {}", game_id).as_str());
+            let mut game_state: GameState = serde_json::from_str(game.as_str()).unwrap();
+            if game_state.status != GameStatus::Started {
+                return Some(HttpResponse::BadRequest().body(format!("Game {} can't take commands because it is currently in status {:?}", &game_id, &game_state.status)));
+            }
+            let current_round = game_state.current_round;
+            let round_state = game_state.round_states.get_mut(&current_round).unwrap();
+            let player = round_state.player_name_player_map.get_mut(&player_name).unwrap();
+            if player.commands.values().any(|commands| !commands.is_empty()) {
+                error!("Overwriting commands for player {}, before : {:?} ", player.player_name, player.commands);
+                player.commands.clear();
+            }
+            for command in commands {
+                player.commands.entry(command.command_type)
+                    .or_insert_with(VecDeque::new)
+                    .push_back(command);
+            }
+            info!("Player {} submitted commands: {:?}", player.player_name, player.commands);
+            let game_state = process_commands_for_round(game_state).await.unwrap();
+            let player_state_dto = get_player_state_dto_from_gamestate(game_state, &player_name);
+            return Some(HttpResponse::Ok().json(player_state_dto));
+        }
+    }).await.unwrap_or(HttpResponse::InternalServerError().body(format!("Game {game_id} experienced an unknown error")))
 }

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use rand::distributions::{Distribution, WeightedIndex};
 use rand::Rng;
@@ -36,15 +36,19 @@ The relationship between planets is express as neighbour relation (Direction(Nor
             }
         }
         //Remove "size" amount of random planets from the map.
-        for _ in 0..size {
-            loop {
-                let x = rng.gen_range(0..size);
-                let y = rng.gen_range(0..size);
-                if let Some(_) = &mut planets[x][y] {
-                    planets[x][y] = None;
-                    break;
-                }
+        let mut removed_planets = 0;
+        while removed_planets < size {
+            let x = rng.gen_range(0..size);
+            let y = rng.gen_range(0..size);
+            if planets[x][y].is_some() && MapGenerator::can_remove_planet(&mut planets, x, y, size) {
+                planets[x][y] = None;
+                removed_planets += 1;
             }
+        }
+
+        // Stelle sicher, dass alle verbleibenden Planeten verbunden sind
+        if !MapGenerator::all_planets_connected(&planets, size) {
+            panic!("Nicht alle Planeten sind verbunden. Bitte die Map-Generierung erneut durchführen.");
         }
 
         //Nachbarschaften setzen.
@@ -84,6 +88,57 @@ The relationship between planets is express as neighbour relation (Direction(Nor
         let map_print_as_string = MapGenerator::display_map_with_connections(planets_ref_structure);
         info!("Map:\n{}", map_print_as_string);
         return planets;
+    }
+
+    fn can_remove_planet(planets: &mut Vec<Vec<Option<Planet>>>, x: usize, y: usize, size: usize) -> bool {
+        // Entferne den Planeten temporär
+        let temp = planets[x][y].take();
+
+        let is_connected = MapGenerator::all_planets_connected(planets, size);
+
+        // Stelle den Planeten wieder her
+        planets[x][y] = temp;
+
+        is_connected
+    }
+
+    fn all_planets_connected(planets: &Vec<Vec<Option<Planet>>>, size: usize) -> bool {
+        let mut visited = HashSet::new();
+        let mut queue = VecDeque::new();
+
+        // Finde den ersten vorhandenen Planeten und starte die Suche von dort
+        'outer: for x in 0..size {
+            for y in 0..size {
+                if planets[x][y].is_some() {
+                    queue.push_back((x, y));
+                    visited.insert((x, y));
+                    break 'outer;
+                }
+            }
+        }
+
+        // Führe eine Breitensuche (BFS) durch, um alle erreichbaren Planeten zu besuchen
+        while let Some((x, y)) = queue.pop_front() {
+            for (dx, dy) in [(-1, 0), (0, -1), (1, 0), (0, 1)] {
+                let new_x = (x as isize + dx) as usize;
+                let new_y = (y as isize + dy) as usize;
+                if new_x < size && new_y < size && planets[new_x][new_y].is_some() && !visited.contains(&(new_x, new_y)) {
+                    queue.push_back((new_x, new_y));
+                    visited.insert((new_x, new_y));
+                }
+            }
+        }
+
+        // Überprüfe, ob alle Planeten besucht wurden
+        for x in 0..size {
+            for y in 0..size {
+                if planets[x][y].is_some() && !visited.contains(&(x, y)) {
+                    return false;
+                }
+            }
+        }
+
+        true
     }
 
     pub fn convert_to_hashmap(planets: &Vec<Vec<Option<Planet>>>) -> HashMap<Uuid, Planet> {

@@ -21,6 +21,10 @@ pub async fn calculate_damage_for_round(game_state: &mut GameState) -> Vec<Damag
             commands.drain(..).filter_map(|command| {
                 let attacker_id = command.command_object.robot_id.expect("Attacker id is required");
                 let target_id = command.command_object.target_id.expect("Target id is required");
+                if attacker_id == target_id {
+                    error!("Robot {} with id {} cannot attack itself", &player.player_name, &attacker_id);
+                    return None;
+                }
 
                 player.robots.get(&attacker_id).and_then(|attacker_robot| {
                     if attacker_robot.is_alive() {
@@ -32,7 +36,7 @@ pub async fn calculate_damage_for_round(game_state: &mut GameState) -> Vec<Damag
                         let attacker_damage = attacker_robot.levels.get_damage_for_level();
                         Some(DamageReport {
                             attacker_id,
-                            attacker_name: player.player_name.clone(), // consider if clone is necessary here
+                            attacker_name: command.player_name,
                             defender_id: target_id,
                             damage_to_take: attacker_damage,
                         })
@@ -55,35 +59,46 @@ pub fn apply_damage_for_round(damage_reports: Vec<DamageReport>, game_state: &mu
     }
     let mut kill_reports = Vec::new();
     for damage_report in damage_reports {
-        if let Some(attackers_robots) = game_state.get_robots_for_current_round_by_robot_id(&damage_report.attacker_id) {
+        if let Some(attackers_robots) = game_state.get_robots_for_current_round(&damage_report.attacker_name) {
             if let Some(attacker_robot) = attackers_robots.get_mut(&damage_report.attacker_id) {
                 let energy_cost_for_attack = attacker_robot.levels.damage_level.get_int_value() + 1;
-                attacker_robot.energy -= energy_cost_for_attack
+                attacker_robot.energy -= energy_cost_for_attack; //TODO: Eigentlich muss das weiter unten hin, nach dem check
+
+                if let Some((target_robot, target_player_name)) = game_state.get_robot_and_playername_for_current_round_by_robot_id(&damage_report.defender_id) {
+                    if damage_report.attacker_id.clone() == target_robot.robot_id.clone() {
+                        error!("Robot of {} with id {} cannot attack itself", damage_report.attacker_name, damage_report.attacker_id);
+                        continue;
+                    }
+                    target_robot.take_damage(damage_report.damage_to_take);
+                    if !target_robot.is_alive() {
+                        info!("Robot {} of player {} was killed by {} {}", damage_report.defender_id, target_player_name, damage_report.attacker_name, damage_report.attacker_id);
+                        let kill_report = KillReport {
+                            attacker_name: damage_report.attacker_name.clone(),
+                            attacker_robot_id: damage_report.attacker_id,
+                            player_name_whose_robot_got_killed: target_player_name.clone(),
+                            killed_robot: target_robot.clone(), // Consider avoiding clone
+                        };
+                        if kill_report.attacker_robot_id == kill_report.killed_robot.robot_id {
+                            error!("Robot of {} with id {} cannot kill itself", kill_report.attacker_name, kill_report.attacker_robot_id);
+                        } else {
+                            kill_reports.push(kill_report);
+                        }
+                    }
+                } else {
+                    error!("Target robot not found for ID {}", damage_report.defender_id);
+                }
             } else {
                 error!("Attacker robot not found for ID {}", damage_report.attacker_id);
             }
         } else {
             error!("Attacker robot not found for ID {}", damage_report.attacker_id);
         }
-        if let Some((target_robot, target_player_name)) = game_state.get_robot_and_playername_for_current_round_by_robot_id(&damage_report.defender_id) {
-            target_robot.take_damage(damage_report.damage_to_take);
-            if !target_robot.is_alive() {
-                info!("Robot {} of player {} was killed by {}", damage_report.defender_id, target_player_name, damage_report.attacker_name);
-                kill_reports.push(KillReport {
-                    attacker_name: damage_report.attacker_name.clone(),
-                    attacker_robot_id: damage_report.attacker_id,
-                    player_name_whose_robot_got_killed: target_player_name.clone(),
-                    killed_robot: target_robot.clone(), // Consider avoiding clone
-                });
-            }
-        } else {
-            error!("Target robot not found for ID {}", damage_report.defender_id);
-        }
     }
 
     for report in kill_reports {
         if let Some(player_state) = game_state.get_player_for_current_round_as_mut(&report.attacker_name) {
-            player_state.killed_robots.insert(report.attacker_robot_id, (report.player_name_whose_robot_got_killed, report.killed_robot));
+            let mut existing_killed_robots = player_state.killed_robots.entry(report.attacker_robot_id).or_insert_with(Vec::new);
+            existing_killed_robots.push((report.player_name_whose_robot_got_killed, report.killed_robot));
         } else {
             error!("Player {} (Attacker) not found", report.attacker_name);
         }
