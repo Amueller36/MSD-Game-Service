@@ -200,7 +200,9 @@ mod tests {
     fn test_create_map() {
         let size = 15;
         let map = MapGenerator::create_map(size);
-        assert_eq!(map.len(), size*size-size);
+        for row in map {
+            assert_eq!(row.len(), size);
+        }
     }
 
     #[test]

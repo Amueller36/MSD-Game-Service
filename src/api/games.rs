@@ -26,7 +26,7 @@ use crate::robot::robot::Robot;
 use crate::trading::external::command::Command;
 use crate::trading::external::command_type::CommandType;
 use crate::trading::external::handler::battle_command_handler::{apply_damage_for_round, calculate_damage_for_round, delete_commands_for_dead_robots};
-use crate::trading::external::handler::buy_command_handler::handle_buy_commands;
+use crate::trading::external::handler::buy_command_handler::{handle_buy_commands, Item};
 use crate::trading::external::handler::mining_command_handler::handle_mining_commands;
 //use crate::trading::external::handler::mining_command_handler::handle_mining_command;
 use crate::trading::external::handler::movement_command_handler::handle_movement_commands;
@@ -103,6 +103,8 @@ struct RobotDto {
     mineable_resources: Vec<Resource>,
     damage: u32,
     fighting_score: f32,
+    money_value: u32,
+    money_made: u32,
 }
 
 #[derive(serde::Serialize, Clone)]
@@ -630,7 +632,24 @@ async fn handle_batch_of_commands(mut body: web::Json<Vec<Command>>, path: web::
         info!("Player {} submitted commands: {:?}", player.player_name, player.commands);
 
         if all_players_submitted_commands(&game_state) {
-            let game_state = process_commands_for_round(game_state).await.unwrap();
+            let mut game_state = process_commands_for_round(game_state).await.unwrap();
+            // Zähle die Anzahl der Spieler, die sich keine Roboter leisten können
+            let mut cannot_afford_robot_count = 0;
+            let player_count = game_state.round_states.get(&game_state.current_round).unwrap().player_name_player_map.len();
+
+            for player in game_state.round_states.get(&game_state.current_round).unwrap().player_name_player_map.values() {
+                // Wenn der Spieler keine ALIVE Robots mehr hat und kein Geld sich neue zu kaufen, dann kann er sich keine Roboter leisten
+                let no_robots_alive = player.robots.iter().all(|robot| !robot.1.is_alive());
+                if no_robots_alive && player.money.amount < Item::Robot(1).get_cost() {
+                    cannot_afford_robot_count += 1;
+                    info!("Player {} has no robots and can't afford to buy a new robot. HE LOST!", player.player_name);
+                }
+            }
+
+            // Setze current_round auf max_rounds, wenn alle bis auf maximal einen Spieler sich keine Roboter leisten können
+            if cannot_afford_robot_count >= player_count - 1 && player_count > 1 {
+                game_state.current_round = game_state.max_rounds;
+            }
             let is_write_successful: bool = con.set(format!("games/{}", &game_id), serde_json::to_string(&game_state).unwrap()).await.unwrap_or(false);
             if !is_write_successful {
                 return Some(HttpResponse::InternalServerError().body(format!("Failed to save game {} to Redis", &game_id)));
@@ -738,6 +757,8 @@ fn get_player_state_dto_from_gamestate(game_state: GameState, player_name: &str)
                 mineable_resources: robot.get_mineable_resources(),
                 damage: robot.levels.get_damage_for_level(),
                 fighting_score: robot.get_fighting_score(),
+                money_value: robot.get_money_costs_for_robots_existing_upgrades(),
+                money_made: robot.money_made
             };
             if robot.health > 0 {
                 alive.insert(*robot_id, robot_dto);
@@ -768,6 +789,8 @@ fn get_player_state_dto_from_gamestate(game_state: GameState, player_name: &str)
                 mineable_resources: robot.get_mineable_resources(),
                 damage: robot.levels.get_damage_for_level(),
                 fighting_score: robot.get_fighting_score(),
+                money_value: robot.get_money_costs_for_robots_existing_upgrades(),
+                money_made: robot.money_made
             };
             if robot.health > 0 {
                 alive.insert(robot.robot_id, robot_dto);
@@ -778,7 +801,7 @@ fn get_player_state_dto_from_gamestate(game_state: GameState, player_name: &str)
         },
     );
     // Compute planet data in parallel
-    let planetMap: HashMap<Uuid, PlanetPlayerDto> = map.indices.values().par_bridge().map(|&(x, y)| {
+    let planet_map: HashMap<Uuid, PlanetPlayerDto> = map.indices.values().par_bridge().map(|&(x, y)| {
         let planet = map.planets[x][y].as_ref().unwrap();
         let resource_data = planet.resources.as_ref().map(|(r, a)| (Some(r.clone()), *a)).unwrap_or((None, 0));
 
@@ -807,7 +830,7 @@ fn get_player_state_dto_from_gamestate(game_state: GameState, player_name: &str)
         player_name: player_state.player_name.clone(),
         money: player_state.money.amount,
         total_money_made: player_state.total_money_made.amount,
-        map: planetMap,
+        map: planet_map,
         visited_planets: player_state.clone().visited_planets,
         alive_robots: alive_robots,
         alive_enemy_robots: alive_enemy_robots,
@@ -830,6 +853,8 @@ fn get_player_state_dto_from_gamestate(game_state: GameState, player_name: &str)
                 mineable_resources: robot.get_mineable_resources(),
                 damage: robot.stats.damage,
                 fighting_score: robot.get_fighting_score(),
+                money_value: robot.get_money_costs_for_robots_existing_upgrades(),
+                money_made: robot.money_made
             };
             (*robot_id, (enemy_player_name.clone(), robot_dto))
         }).collect::<HashMap<Uuid,(String,RobotDto)>>().clone(),

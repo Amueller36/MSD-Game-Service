@@ -17,6 +17,7 @@ pub struct Robot {
     pub levels: RobotLevels,
     pub stats: RobotStats,
     pub inventory: HashMap<Resource, u32>,
+    pub money_made: u32,
 }
 
 
@@ -31,6 +32,7 @@ impl Robot {
             stats: RobotStats::default(),
             levels,
             inventory: HashMap::new(),
+            money_made: 0,
         }
     }
     pub fn is_alive(&self) -> bool {
@@ -67,6 +69,18 @@ impl Robot {
     pub fn get_free_storage_space(&self) -> u32 {
         let used_inventory_space = self.inventory.iter().fold(0, |acc, (_, amount)| acc + amount);
         self.stats.max_storage - used_inventory_space
+    }
+
+    pub fn get_money_costs_for_robots_existing_upgrades(&self) -> u32 {
+        let mut costs = 100;
+        costs += RobotLevels::get_cost_for_level(&self.levels.health_level);
+        costs += RobotLevels::get_cost_for_level(&self.levels.damage_level);
+        costs += RobotLevels::get_cost_for_level(&self.levels.mining_level);
+        costs += RobotLevels::get_cost_for_level(&self.levels.mining_speed_level);
+        costs += RobotLevels::get_cost_for_level(&self.levels.energy_level);
+        costs += RobotLevels::get_cost_for_level(&self.levels.energy_regen_level);
+        costs += RobotLevels::get_cost_for_level(&self.levels.storage_level);
+        costs
     }
 
 

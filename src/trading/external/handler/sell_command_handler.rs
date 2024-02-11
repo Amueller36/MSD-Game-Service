@@ -35,6 +35,7 @@ pub fn handle_selling_commands(game_state: &mut GameState) {
                     error!("Robot with id {} has an empty inventory and tried to sell!", robot_id);
                     continue;
                 }
+                robot.money_made += resource_values;
                 total_money_made.amount += resource_values;
                 money.amount += resource_values;
                 robot.inventory.clear();
