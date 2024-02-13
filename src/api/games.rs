@@ -653,6 +653,9 @@ async fn handle_batch_of_commands(mut body: web::Json<Vec<Command>>, path: web::
             if cannot_afford_robot_count >= player_count - 1 && player_count > 1 {
                 game_state.current_round = game_state.max_rounds;
             }
+            if(game_state.current_round == game_state.max_rounds) {
+                game_state.status = GameStatus::Ended;
+            }
             let is_write_successful: bool = con.set(format!("games/{}", &game_id), serde_json::to_string(&game_state).unwrap()).await.unwrap_or(false);
             if !is_write_successful {
                 return Some(HttpResponse::InternalServerError().body(format!("Failed to save game {} to Redis", &game_id)));
@@ -916,6 +919,9 @@ async fn handle_batch_of_commands_hypothetically(mut body: web::Json<Vec<Command
                 return Some(HttpResponse::BadRequest().body(format!("Game {} can't take commands because it is currently in status {:?}", &game_id, &game_state.status)));
             }
             let current_round = game_state.current_round;
+            if(current_round == game_state.max_rounds) {
+                game_state.status = GameStatus::Ended;
+            }
             let round_state = game_state.round_states.get_mut(&current_round).unwrap();
             let player = round_state.player_name_player_map.get_mut(&player_name).unwrap();
             if player.commands.values().any(|commands| !commands.is_empty()) {
