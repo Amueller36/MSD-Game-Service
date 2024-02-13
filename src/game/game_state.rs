@@ -203,10 +203,13 @@ impl GameState {
     pub fn start_next_round(&mut self) -> bool {
         if self.current_round < self.max_rounds {
             self.current_round += 1;
-            info!("Starting round {}", self.current_round);
+            if self.current_round == self.max_rounds {
+                info!("Ended Game {}. Round {}", self.game_id, self.current_round);
+            } else {
+                info!("Starting round {}", self.current_round);
+            }
             return true;
         }
-        self.status = GameStatus::Ended;
         false
     }
 }
