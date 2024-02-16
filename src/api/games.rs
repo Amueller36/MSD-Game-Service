@@ -655,6 +655,10 @@ async fn handle_batch_of_commands(mut body: web::Json<Vec<Command>>, path: web::
             }
             if(game_state.current_round == game_state.max_rounds) {
                 game_state.status = GameStatus::Ended;
+                if !game_state.round_states.contains_key(&game_state.current_round){
+                    let round_state = game_state.round_states.iter().max_by_key(|(&round, _)| round).unwrap().1.clone();
+                    game_state.round_states.insert(game_state.current_round, round_state);
+                }
             }
             let is_write_successful: bool = con.set(format!("games/{}", &game_id), serde_json::to_string(&game_state).unwrap()).await.unwrap_or(false);
             if !is_write_successful {
