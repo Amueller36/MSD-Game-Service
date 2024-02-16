@@ -8,7 +8,7 @@ use crate::robot::robot_levels::RobotLevels;
 use crate::robot::robot_stats::RobotStats;
 use crate::trading::external::command_type::CommandType;
 
-pub fn handle_buy_commands(game_state: &mut GameState) {
+pub fn handle_buy_commands(game_state: &mut GameState, spawn_robots: bool) {
     let round_state = game_state.round_states.get_mut(&game_state.current_round).unwrap();
     let map = &round_state.map;
     let mut player_name_player_map = round_state.player_name_player_map.values_mut();
@@ -102,6 +102,10 @@ pub fn handle_buy_commands(game_state: &mut GameState) {
                         money.amount -= item_cost;
                         match item {
                             Item::Robot(amount) => {
+                                if !spawn_robots{
+                                    info!("Skipping to spawn robots, because we are 'hypothetically' transforming the state");
+                                    continue
+                                }
                                 //choose random planet which is not empty on map and spawn robot there
                                 for _ in 0..amount {
                                     let rand = rand::random::<usize>() % map.indices.len();

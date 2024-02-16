@@ -571,12 +571,12 @@ fn all_players_submitted_commands(game_state: &GameState) -> bool {
     })
 }
 
-async fn process_commands_for_round(mut game_state: GameState) -> Option<GameState> {
+async fn process_commands_for_round(mut game_state: GameState, should_spawn_robots: bool) -> Option<GameState> {
     let current_round = game_state.current_round;
     let old_round_state = game_state.round_states.get(&current_round).unwrap().clone();
 
     handle_selling_commands(&mut game_state);
-    handle_buy_commands(&mut game_state);
+    handle_buy_commands(&mut game_state, should_spawn_robots);
     handle_movement_commands(&mut game_state);
     //Battle
     let damage_reports = calculate_damage_for_round(&mut game_state).await;
@@ -635,7 +635,7 @@ async fn handle_batch_of_commands(mut body: web::Json<Vec<Command>>, path: web::
         info!("Player {} submitted commands: {:?}", player.player_name, player.commands);
 
         if all_players_submitted_commands(&game_state) {
-            let mut game_state = process_commands_for_round(game_state).await.unwrap();
+            let mut game_state = process_commands_for_round(game_state, true).await.unwrap();
             // Zähle die Anzahl der Spieler, die sich keine Roboter leisten können
             let mut cannot_afford_robot_count = 0;
             let player_count = game_state.round_states.get(&game_state.current_round).unwrap().player_name_player_map.len();
@@ -934,7 +934,7 @@ async fn handle_batch_of_commands_hypothetically(mut body: web::Json<Vec<Command
                     .push_back(command);
             }
             info!("Player {} submitted commands: {:?}", player.player_name, player.commands);
-            let game_state = process_commands_for_round(game_state).await.unwrap();
+            let game_state = process_commands_for_round(game_state, false).await.unwrap();
             let player_state_dto = get_player_state_dto_from_gamestate(game_state, &player_name);
             return Some(HttpResponse::Ok().json(player_state_dto));
         }
