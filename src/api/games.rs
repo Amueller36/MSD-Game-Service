@@ -674,13 +674,15 @@ async fn handle_batch_of_commands(mut body: web::Json<Vec<Command>>, path: web::
             if !is_write_successful {
                 return Some(HttpResponse::InternalServerError().body(format!("Failed to save game {} to Redis", &game_id)));
             }
-            //Delete hypothetical state of game
-            for player_name in game_state.round_states[&previous_round_number].player_name_player_map.keys() {
-
+            //Overwrite Hypothetical Game State with new round state (Saves time because Entire Gamestate with all rounds doesnt need to be deserialzied later on)
+            let current_round_state = game_state.round_states.remove(&game_state.current_round).unwrap();
+            game_state.round_states.clear();
+            game_state.round_states.insert(game_state.current_round, current_round_state);
+            let game_state_as_string = serde_json::to_string(&game_state).unwrap();
+            for player_name in game_state.participating_players {
                 let hypothetical_game_state_key = format!("hypogames/{}/players/{}/hypothetical_game_state", &game_id, &player_name);
-
-                info!("Deleting hypothetical state of game {} for player {player_name}", &game_id);
-                let _: () = con.del(&hypothetical_game_state_key).await.unwrap_or(());
+                info!("Overwriting hypothetical state of game {} for player {player_name} with new round", &game_id);
+                let _: () = con.set(&hypothetical_game_state_key, &game_state_as_string).await.unwrap_or(());
             }
             return Some(HttpResponse::Ok().finish());
         }
@@ -864,7 +866,7 @@ fn get_player_state_dto_from_gamestate(game_state: GameState, player_name: &str,
         money: player_state.money.amount,
         total_money_made: player_state.total_money_made.amount,
         map: planet_map,
-        visited_planets: player_state.clone().visited_planets,
+        visited_planets: player_state.visited_planets.clone(),
         alive_robots: alive_robots,
         alive_enemy_robots: alive_enemy_robots,
         dead_robots: dead_robots,
@@ -1098,7 +1100,7 @@ async fn handle_batch_of_commands_hypothetically(
                 let mut state :GameState = serde_json::from_str(&game).unwrap();
                 // Remove all previous round states to reduce size of game state / future parsing time / memory usage
                 let current_round = state.current_round;
-                let current_round_state = state.round_states.get(&current_round).unwrap().clone();
+                let current_round_state = state.round_states.remove(&current_round).unwrap();
                 state.round_states.clear();
                 state.round_states.insert(current_round, current_round_state);
                 state
