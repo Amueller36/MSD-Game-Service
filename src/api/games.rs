@@ -13,7 +13,7 @@ use serde::{Serialize};
 use serde_json::json;
 use tokio::time::sleep;
 use tracing::error;
-use tracing::log::info;
+use tracing::log::{debug, info};
 use uuid::Uuid;
 
 use crate::game::game_state::{GameMap, GameState, GameStatus, RoundState};
@@ -52,8 +52,9 @@ pub fn game_routes(cfg: &mut web::ServiceConfig) {
         .service(handle_batch_of_commands)
         .service(get_robots_for_current_round)
         .service(get_robot_for_current_round_by_player_id_and_robot_id)
-        .service(get_player_state_for_current_round)
         .service(get_player_state_for_current_round_with_xy_for_planets)
+        .service(get_player_state_for_specified_round_with_xy_for_planets)
+        .service(get_player_state_for_current_round)
         .service(handle_batch_of_commands_hypothetically);
 }
 
@@ -544,10 +545,13 @@ fn all_players_submitted_commands(game_state: &GameState) -> bool {
     let players = &round_state.player_name_player_map;
     players.values().all(|player| {
         let player_has_commands = player.commands.values().any(|commands| !commands.is_empty());
-        let player_without_robots_has_buying_command = player.robots.is_empty() && player.commands.values().any(|commands| commands.iter().any(|command| command.command_type == CommandType::BUYING));
+
+        let all_robots_dead = player.robots.par_iter().all(|(_, robot)| !robot.is_alive());
+
+        let player_with_only_dead_or_no_robots_has_buying_command_for_new_robots = all_robots_dead && player.commands.values().any(|commands| commands.iter().any(|command| command.command_type == CommandType::BUYING));
 
         let mut alive_robot_ids_for_player = player.robots
-            .iter()
+            .par_iter()
             .filter_map(|(&robot_id, robot)| if robot.is_alive() { Some(robot_id) } else { None })
             .collect::<HashSet<Uuid>>();
         let alive_robot_amount = alive_robot_ids_for_player.len();
@@ -565,13 +569,13 @@ fn all_players_submitted_commands(game_state: &GameState) -> bool {
         }
         let player_with_robots_has_commands_for_every_robot = alive_robot_ids_for_player.is_empty() && alive_robot_amount > 0;
 
-        info!("Player {} has commands: {}, player_without_robots_has_buying_command: {}, player_with_robots_has_commands_for_every_robot: {} Number left in set: {}", player.player_name, player_has_commands, player_without_robots_has_buying_command, player_with_robots_has_commands_for_every_robot, alive_robot_ids_for_player.len());
+        debug!("Player {} has commands: {}, player_with_only_dead_or_no_robots_has_buying_command_for_new_robots: {}, player_with_robots_has_commands_for_every_robot: {} Number left in set: {}", player.player_name, player_has_commands, player_with_only_dead_or_no_robots_has_buying_command_for_new_robots, player_with_robots_has_commands_for_every_robot, alive_robot_ids_for_player.len());
 
-        player_has_commands && (player_without_robots_has_buying_command || player_with_robots_has_commands_for_every_robot)
+        player_has_commands && (player_with_only_dead_or_no_robots_has_buying_command_for_new_robots || player_with_robots_has_commands_for_every_robot)
     })
 }
 
-async fn process_commands_for_round(mut game_state: GameState, should_spawn_robots: bool) -> Option<GameState> {
+async fn process_commands_for_current_round(mut game_state: GameState, should_spawn_robots: bool, hypothetically: bool) -> Option<GameState> {
     let current_round = game_state.current_round;
     let old_round_state = game_state.round_states.get(&current_round).unwrap().clone();
 
@@ -585,8 +589,12 @@ async fn process_commands_for_round(mut game_state: GameState, should_spawn_robo
     handle_mining_commands(&mut game_state);
     handle_regenerate_commands(&mut game_state);
 
+    if hypothetically {
+        return Some(game_state);
+    }
     let mut new_round_state = game_state.round_states.get_mut(&current_round).unwrap().clone();
     //TODO: Potential flaw in Roundnumber Logic error handling if games are supposed to end.
+
     game_state.round_states.insert(current_round, old_round_state);
     game_state.start_next_round();
     new_round_state.round_number = game_state.current_round;
@@ -632,37 +640,47 @@ async fn handle_batch_of_commands(mut body: web::Json<Vec<Command>>, path: web::
                 .or_insert_with(VecDeque::new)
                 .push_back(command);
         }
-        info!("Player {} submitted commands: {:?}", player.player_name, player.commands);
+        debug!("Player {} submitted commands: {:?}", player.player_name, player.commands);
 
         if all_players_submitted_commands(&game_state) {
-            let mut game_state = process_commands_for_round(game_state, true).await.unwrap();
+            let previous_round_number = game_state.current_round;
+            let mut game_state = process_commands_for_current_round(game_state, true, false).await.unwrap();
             // Zähle die Anzahl der Spieler, die sich keine Roboter leisten können
             let mut cannot_afford_robot_count = 0;
             let player_count = game_state.round_states.get(&game_state.current_round).unwrap().player_name_player_map.len();
 
             for player in game_state.round_states.get(&game_state.current_round).unwrap().player_name_player_map.values() {
                 // Wenn der Spieler keine ALIVE Robots mehr hat und kein Geld sich neue zu kaufen, dann kann er sich keine Roboter leisten
-                let no_robots_alive = player.robots.par_iter().all(|robot| !robot.1.is_alive());
-                if no_robots_alive && player.money.amount < Item::Robot(1).get_cost() {
+                let alive_robots_exist = player.robots.iter().any(|(robot_id, robot)| robot.is_alive());
+                if !alive_robots_exist && player.money.amount < Item::Robot(1).get_cost() {
                     cannot_afford_robot_count += 1;
-                    info!("Player {} has no robots and can't afford to buy a new robot. HE LOST!", player.player_name);
+                    debug!("Player {} has no robots and can't afford to buy a new robot. HE LOST!", player.player_name);
                 }
             }
+            let current_highest_round = game_state.current_round;
 
             // Setze current_round auf max_rounds, wenn alle bis auf maximal einen Spieler sich keine Roboter leisten können
             if cannot_afford_robot_count >= player_count - 1 && player_count > 1 {
                 game_state.current_round = game_state.max_rounds;
             }
-            if(game_state.current_round == game_state.max_rounds) {
+            if (game_state.current_round == game_state.max_rounds) {
                 game_state.status = GameStatus::Ended;
-                if !game_state.round_states.contains_key(&game_state.current_round){
-                    let round_state = game_state.round_states.iter().max_by_key(|(&round, _)| round).unwrap().1.clone();
-                    game_state.round_states.insert(game_state.current_round, round_state);
+                if !game_state.round_states.contains_key(&game_state.current_round) {
+                    let round_state = game_state.round_states.get(&current_highest_round).unwrap();
+                    game_state.round_states.insert(game_state.current_round, round_state.clone());
                 }
             }
             let is_write_successful: bool = con.set(format!("games/{}", &game_id), serde_json::to_string(&game_state).unwrap()).await.unwrap_or(false);
             if !is_write_successful {
                 return Some(HttpResponse::InternalServerError().body(format!("Failed to save game {} to Redis", &game_id)));
+            }
+            //Delete hypothetical state of game
+            for player_name in game_state.round_states[&previous_round_number].player_name_player_map.keys() {
+
+                let hypothetical_game_state_key = format!("hypogames/{}/players/{}/hypothetical_game_state", &game_id, &player_name);
+
+                info!("Deleting hypothetical state of game {} for player {player_name}", &game_id);
+                let _: () = con.del(&hypothetical_game_state_key).await.unwrap_or(());
             }
             return Some(HttpResponse::Ok().finish());
         }
@@ -706,7 +724,7 @@ async fn get_player_state_for_current_round(path: web::Path<(String, String)>, r
             let mut con = redis_client.get().await.expect("Failed to get Redis connection from pool");
             let game: String = con.get(format!("games/{}", &game_id)).await.expect(&format!("Failed to get game {} . Maybe a non existent gameid was passed.", &game_id));
             let game_state: GameState = serde_json::from_str(&game).unwrap();
-            let player_state = game_state.get_player_for_current_round(&player_name).unwrap();
+            let player_state = game_state.get_player_for_round(&player_name, game_state.current_round).unwrap();
             let enemy_robots = game_state.get_enemy_robots_for_current_round(&player_name).unwrap_or_else(|| Vec::new());
 
             #[derive(serde::Serialize)]
@@ -746,10 +764,11 @@ async fn get_player_state_for_current_round(path: web::Path<(String, String)>, r
         }
     }).await.unwrap_or(HttpResponse::InternalServerError().body(format!("Game {game_id} playerstate cant be retrieved")))
 }
-fn get_player_state_dto_from_gamestate(game_state: GameState, player_name: &str) -> PlayerStateDto {
+
+fn get_player_state_dto_from_gamestate(game_state: GameState, player_name: &str, round_number: u16) -> PlayerStateDto {
     let map = &game_state.round_states[&game_state.current_round].map;
 
-    let player_state = game_state.get_player_for_current_round(&player_name).unwrap();
+    let player_state = game_state.get_player_for_round(&player_name, round_number).unwrap();
     // Function to create RobotDto HashMap
     let (alive_robots, dead_robots) = player_state.robots.iter().fold(
         (HashMap::new(), HashMap::new()),
@@ -775,9 +794,9 @@ fn get_player_state_dto_from_gamestate(game_state: GameState, player_name: &str)
                 money_made: robot.money_made,
             };
             if robot.health > 0 {
-                alive.insert(*robot_id, robot_dto);
+                alive.insert(robot.robot_id, robot_dto);
             } else {
-                dead.insert(*robot_id, robot_dto);
+                dead.insert(robot.robot_id, robot_dto);
             }
             (alive, dead)
         },
@@ -887,7 +906,23 @@ async fn get_player_state_for_current_round_with_xy_for_planets(path: web::Path<
             let mut con = redis_client.get().await.expect("Failed to get Redis connection from pool");
             let game: String = con.get(format!("games/{}", &game_id)).await.expect(&format!("Failed to get game {} . Maybe a non existent gameid was passed.", &game_id));
             let game_state: GameState = serde_json::from_str(&game).unwrap();
-            let player_state_dto = get_player_state_dto_from_gamestate(game_state, &player_name);
+            let current_round = game_state.current_round.clone();
+            let player_state_dto = get_player_state_dto_from_gamestate(game_state, &player_name, current_round);
+            Some(HttpResponse::Ok().json(player_state_dto))
+        }
+    }).await
+        .unwrap_or(HttpResponse::InternalServerError().body(format!("Game {game_id} experienced some unknown error")))
+}
+
+#[actix_web::get("/games/{game_id}/{round_number}/players/{player_name}/new")]
+async fn get_player_state_for_specified_round_with_xy_for_planets(path: web::Path<(String, u16, String)>, redis_client: web::Data<Pool<RedisConnectionManager>>) -> impl Responder {
+    let (game_id, round_number, player_name) = path.into_inner();
+    with_game_lock(&redis_client, &game_id, || async {
+        {
+            let mut con = redis_client.get().await.expect("Failed to get Redis connection from pool");
+            let game: String = con.get(format!("games/{}", &game_id)).await.expect(&format!("Failed to get game {} . Maybe a non existent gameid was passed.", &game_id));
+            let game_state: GameState = serde_json::from_str(&game).unwrap();
+            let player_state_dto = get_player_state_dto_from_gamestate(game_state, &player_name, round_number);
             Some(HttpResponse::Ok().json(player_state_dto))
         }
     }).await
@@ -895,52 +930,201 @@ async fn get_player_state_for_current_round_with_xy_for_planets(path: web::Path<
 }
 
 
+// #[actix_web::post("/games/{game_id}/commands/hypothetically")]
+// async fn handle_batch_of_commands_hypothetically(mut body: web::Json<Vec<Command>>, path: web::Path<String>, redis_client: web::Data<Pool<RedisConnectionManager>>) -> impl Responder {
+//     /*
+//     Commands are executed in the following order:
+//     1. Trading
+//     2. Moving
+//     3. Repairing (Buying a health or energy restore)
+//     4. Battleing (only possible when on same planet)
+//     5. Mining
+//     6. Regenerating
+//      */
+//     if body.0.is_empty() {
+//         return HttpResponse::BadRequest().body("No commands found");
+//     }
+//
+//     let game_id = path.into_inner();
+//     let player_name = body.get(0).unwrap().player_name.clone();
+//     let commands = body.0;
+//
+//     with_game_lock(&redis_client, &game_id, || async {
+//         {
+//             let mut con = redis_client.get().await.expect("Failed to get Redis connection from pool");
+//             let game: String = con.get(format!("games/{}", &game_id)).await.expect(format!("Failed to get game {}", game_id).as_str());
+//             let mut game_state: GameState = serde_json::from_str(game.as_str()).unwrap();
+//             if game_state.status != GameStatus::Started {
+//                 return Some(HttpResponse::BadRequest().body(format!("Game {} can't take commands because it is currently in status {:?}", &game_id, &game_state.status)));
+//             }
+//             let current_round = game_state.current_round;
+//             let round_state = game_state.round_states.get_mut(&current_round).unwrap();
+//             let player = round_state.player_name_player_map.get_mut(&player_name).unwrap();
+//             if player.commands.values().any(|commands| !commands.is_empty()) {
+//                 error!("Overwriting commands for player {}, before : {:?} ", player.player_name, player.commands);
+//                 player.commands.clear();
+//             }
+//             for command in commands {
+//                 player.commands.entry(command.command_type)
+//                     .or_insert_with(VecDeque::new)
+//                     .push_back(command);
+//             }
+//             // debug!("Player {} submitted commands: {:?}", player.player_name, player.commands);
+//             let game_state = process_commands_for_current_round(game_state, false, true).await.unwrap();
+//             let current_round = game_state.current_round.clone();
+//             let player_state_dto = get_player_state_dto_from_gamestate(game_state, &player_name, current_round);
+//             return Some(HttpResponse::Ok().json(player_state_dto));
+//         }
+//     }).await.unwrap_or(HttpResponse::InternalServerError().body(format!("Game {game_id} experienced an unknown error")))
+// }
+
+// #[actix_web::post("/games/{game_id}/commands/hypothetically")]
+// async fn handle_batch_of_commands_hypothetically(mut body: web::Json<Vec<Command>>, path: web::Path<String>, redis_client: web::Data<Pool<RedisConnectionManager>>) -> impl Responder {
+//     /*
+//     Commands are executed in the following order:
+//     1. Trading
+//     2. Moving
+//     3. Repairing (Buying a health or energy restore)
+//     4. Battleing (only possible when on same planet)
+//     5. Mining
+//     6. Regenerating
+//      */
+//
+//     /*
+//     I want to implement caching for already processed commands for a given game and round. So if a request with partially processed commands comes in, only the remaining commands are processed.
+//      */
+//     if body.0.is_empty() {
+//         return HttpResponse::BadRequest().body("No commands found");
+//     }
+//
+//     let game_id = path.into_inner();
+//     let player_name = body.get(0).unwrap().player_name.clone();
+//     let commands = body.0;
+//
+//     with_game_lock(&redis_client, &game_id, || async {
+//         {
+//             let mut con = redis_client.get().await.expect("Failed to get Redis connection from pool");
+//             let game: String = con.get(format!("games/{}", &game_id)).await.expect(format!("Failed to get game {}", game_id).as_str());
+//             let mut game_state: GameState = serde_json::from_str(game.as_str()).unwrap();
+//             if game_state.status != GameStatus::Started {
+//                 return Some(HttpResponse::BadRequest().body(format!("Game {} can't take commands because it is currently in status {:?}", &game_id, &game_state.status)));
+//             }
+//             let current_round = game_state.current_round;
+//             let commands_key = format!("hypoGames/{}/{}/{}/processedCommands", &game_id, current_round, &player_name);
+//             let hypothetical_gamestate_key = format!("hypoGames/{}/{}/{}/gamestateOfProcessedCommands", &game_id, current_round, &player_name);
+//             if con.exists(&hypothetical_gamestate_key).await.unwrap() {
+//                 info!("Hypothetical gamestate for game {} and round {} already exists. Loading it from Redis", &game_id, current_round);
+//                 let game_state_str: String = con.get(&hypothetical_gamestate_key).await.unwrap();
+//                 game_state = serde_json::from_str(&game_state_str.as_str()).unwrap();
+//             }
+//             let mut new_commands= commands.clone();
+//             if con.exists(&commands_key).await.unwrap() {
+//                 info!("Hypothetical processed commands for game {} and round {} already exists. Loading it from Redis", &game_id, current_round);
+//                 let already_processed_commands_str: String = con.get(&commands_key).await.unwrap();
+//                 let already_processed_commands: Vec<Command> = serde_json::from_str(&already_processed_commands_str.as_str()).unwrap();
+//                 let new_commands: Vec<Command> = commands.clone().into_iter().filter(|command| !already_processed_commands.contains(command)).collect();
+//                 if new_commands.is_empty() {
+//                     panic!("Should not happen, bug in python implementation");
+//                 }
+//                 info!("Player {} preExisting processed commands for game {} and round {} are {:?}", &player_name, &game_id, current_round, already_processed_commands);
+//                 info!("Player {} processed commands for game {} and round {} are {:?}:", &player_name, &game_id, current_round, new_commands);
+//             }
+//             let round_state = game_state.round_states.get_mut(&current_round).unwrap();
+//             /*
+//             Empty Commands for every player, because we are in a hypothetical state and we want to process the commands from scratch.
+//             */
+//
+//             for player in round_state.player_name_player_map.values_mut() {
+//                 player.commands.clear();
+//             }
+//
+//             let player = round_state.player_name_player_map.get_mut(&player_name).unwrap();
+//
+//
+//             let is_write_successful: bool = con.set(&commands_key, serde_json::to_string(&commands).unwrap()).await.unwrap_or(false);
+//             if !is_write_successful {
+//                 error!("Failed to save hypothetical processed commands {} to Redis", &game_id);
+//                 return Some(HttpResponse::InternalServerError().body(format!("Failed to save game {} to Redis", &game_id)));
+//             }
+//             if player.commands.values().any(|commands| !commands.is_empty()) {
+//                 panic!("Sollte nicht passieren!");
+//                 error!("Overwriting commands for player {}, before : {:?} ", player.player_name, player.commands);
+//             }
+//
+//             for command in new_commands {
+//                 player.commands.entry(command.command_type)
+//                     .or_insert_with(VecDeque::new)
+//                     .push_back(command);
+//             }
+//             debug!("Player {} submitted {} , original commands object has {} commands: {:?}", player.player_name,player.commands.len(),commands.len(), player.commands);
+//             // debug!("Player {} submitted commands: {:?}", player.player_name, player.commands);
+//             let game_state = process_commands_for_current_round(game_state, false, true).await.unwrap();
+//
+//             let is_write_successful: bool = con.set(&hypothetical_gamestate_key, serde_json::to_string(&game_state).unwrap()).await.expect("Failed to save hypothetical gamestate to Redis");
+//             if !is_write_successful {
+//                 error!("Failed to save hypothetical gamestate {} to Redis", &game_id);
+//                 return Some(HttpResponse::InternalServerError().body(format!("Failed to save game {} to Redis", &game_id)));
+//             }
+//
+//             let player_state_dto = get_player_state_dto_from_gamestate(game_state, &player_name, current_round);
+//
+//             return Some(HttpResponse::Ok().json(player_state_dto));
+//         }
+//     }).await.unwrap_or(HttpResponse::InternalServerError().body(format!("Game {game_id} experienced an unknown error")))
+// }
+
 #[actix_web::post("/games/{game_id}/commands/hypothetically")]
-async fn handle_batch_of_commands_hypothetically(mut body: web::Json<Vec<Command>>, path: web::Path<String>, redis_client: web::Data<Pool<RedisConnectionManager>>) -> impl Responder {
-    /*
-    Commands are executed in the following order:
-    1. Trading
-    2. Moving
-    3. Repairing (Buying a health or energy restore)
-    4. Battleing (only possible when on same planet)
-    5. Mining
-    6. Regenerating
-     */
+async fn handle_batch_of_commands_hypothetically(
+    mut body: web::Json<Vec<Command>>,
+    path: web::Path<String>,
+    redis_client: web::Data<Pool<RedisConnectionManager>>,
+) -> impl Responder {
     if body.0.is_empty() {
         return HttpResponse::BadRequest().body("No commands found");
     }
 
     let game_id = path.into_inner();
-    let player_name = body.get(0).unwrap().player_name.clone();
-    let commands = body.0;
+    let player_name = body.0[0].player_name.clone();
 
     with_game_lock(&redis_client, &game_id, || async {
-        {
-            let mut con = redis_client.get().await.expect("Failed to get Redis connection from pool");
-            let game: String = con.get(format!("games/{}", &game_id)).await.expect(format!("Failed to get game {}", game_id).as_str());
-            let mut game_state: GameState = serde_json::from_str(game.as_str()).unwrap();
-            if game_state.status != GameStatus::Started {
-                return Some(HttpResponse::BadRequest().body(format!("Game {} can't take commands because it is currently in status {:?}", &game_id, &game_state.status)));
+        let mut con = redis_client.get().await.expect("Failed to get Redis connection from pool");
+
+        let hypothetical_game_state_key = format!("hypogames/{}/players/{}/hypothetical_game_state", &game_id, &player_name);
+
+        let mut game_state: GameState = match con.get::<_, String>(&hypothetical_game_state_key).await {
+            Ok(hypothetical_game_state_json) => serde_json::from_str(&hypothetical_game_state_json).expect("Failed to deserialize hypothetical game state"),
+            Err(_) => {
+                let game: String = con.get(format!("games/{}", &game_id)).await.expect("Failed to get game from Redis");
+                let mut state :GameState = serde_json::from_str(&game).unwrap();
+                // Remove all previous round states to reduce size of game state / future parsing time / memory usage
+                let current_round = state.current_round;
+                let current_round_state = state.round_states.get(&current_round).unwrap().clone();
+                state.round_states.clear();
+                state.round_states.insert(current_round, current_round_state);
+                state
             }
-            let current_round = game_state.current_round;
-            if(current_round == game_state.max_rounds) {
-                game_state.status = GameStatus::Ended;
-            }
-            let round_state = game_state.round_states.get_mut(&current_round).unwrap();
-            let player = round_state.player_name_player_map.get_mut(&player_name).unwrap();
-            if player.commands.values().any(|commands| !commands.is_empty()) {
-                error!("Overwriting commands for player {}, before : {:?} ", player.player_name, player.commands);
-                player.commands.clear();
-            }
-            for command in commands {
-                player.commands.entry(command.command_type)
-                    .or_insert_with(VecDeque::new)
-                    .push_back(command);
-            }
-            info!("Player {} submitted commands: {:?}", player.player_name, player.commands);
-            let game_state = process_commands_for_round(game_state, false).await.unwrap();
-            let player_state_dto = get_player_state_dto_from_gamestate(game_state, &player_name);
-            return Some(HttpResponse::Ok().json(player_state_dto));
+        };
+
+        let new_commands = body.0;
+
+        let current_round = game_state.current_round;
+        let round_state = game_state.round_states.get_mut(&current_round).unwrap();
+        let player = round_state.player_name_player_map.get_mut(&player_name).unwrap();
+
+        for command in &new_commands {
+            player.commands.entry(command.command_type)
+                .or_insert_with(VecDeque::new)
+                .push_back(command.clone());
         }
-    }).await.unwrap_or(HttpResponse::InternalServerError().body(format!("Game {game_id} experienced an unknown error")))
+
+        game_state = process_commands_for_current_round(game_state, false, true).await.unwrap();
+
+        //let _: () = con.set(&processed_commands_key, serde_json::to_string(&already_processed_commands).unwrap()).await.unwrap();
+        let _: () = con.set(&hypothetical_game_state_key, serde_json::to_string(&game_state).unwrap()).await.unwrap();
+
+        // Clone game_state before moving
+        let player_state_dto = get_player_state_dto_from_gamestate(game_state, &player_name, current_round);
+
+        Some(HttpResponse::Ok().json(player_state_dto))
+    }).await.unwrap_or_else(|| HttpResponse::InternalServerError().body(format!("Game {} experienced an unknown error", &game_id)))
 }

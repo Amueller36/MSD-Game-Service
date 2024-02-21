@@ -115,8 +115,8 @@ impl GameState {
         None
     }
 
-    pub fn get_player_for_current_round(&self, player_name: &str) -> Option<&PlayerState> {
-        if let Some(round_state) = self.round_states.get(&self.current_round) {
+    pub fn get_player_for_round(&self, player_name: &str, round_number: u16) -> Option<&PlayerState> {
+        if let Some(round_state) = self.round_states.get(&round_number) {
             return round_state.player_name_player_map.get(player_name);
         }
         None

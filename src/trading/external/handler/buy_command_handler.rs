@@ -1,3 +1,4 @@
+use tracing::debug;
 use tracing::log::{error, info};
 use uuid::Uuid;
 
@@ -26,7 +27,7 @@ pub fn handle_buy_commands(game_state: &mut GameState, spawn_robots: bool) {
                 let item_name = command.command_object.item_name.expect("Item name not present");
                 let item_quantity = command.command_object.item_quantity.expect("Item amount not present");
                 let upgrade_or_item = parse_item_name(&item_name, item_quantity).expect("Item name was not present in buy command");
-                info!("Player {} wants to buy {:?}", player.player_name, upgrade_or_item);
+                debug!("Player {} wants to buy {:?}", player.player_name, upgrade_or_item);
                 match upgrade_or_item {
                     UpgradeOrItem::Upgrade(upgrade_type, level) => {
                         let upgrade_cost = RobotLevels::get_cost_for_level(&level);
@@ -44,7 +45,7 @@ pub fn handle_buy_commands(game_state: &mut GameState, spawn_robots: bool) {
                                     robot.levels.health_level = level;
                                     robot.health = robot.levels.get_health_for_level();
                                 } else {
-                                    error!("Player {} tried to buy health upgrade {:?} for robot {} but it already has a higher level", &player.player_name, &level, &robot_id);
+                                    error!("Player {} tried to buy health upgrade {:?} for robot {} but it already has a higher level {:?}", &player.player_name, &level, &robot_id, robot.levels.health_level);
                                 }
                             }
                             UpgradeType::Energy => {
@@ -52,42 +53,42 @@ pub fn handle_buy_commands(game_state: &mut GameState, spawn_robots: bool) {
                                     robot.levels.energy_level = level;
                                     robot.energy = robot.levels.get_energy_for_level();
                                 } else {
-                                    error!("Player {} tried to buy energy upgrade {:?} for robot {} but it already has a higher level", &player.player_name, &level, &robot_id);
+                                    error!("Player {} tried to buy energy upgrade {:?} for robot {} but it already has a higher level {:?}", &player.player_name, &level, &robot_id, robot.levels.energy_level);
                                 }
                             }
                             UpgradeType::EnergyRegen => {
                                 if robot.levels.energy_regen_level < level {
                                     robot.levels.energy_regen_level = level;
                                 } else {
-                                    error!("Player {} tried to buy energy regen upgrade {:?} for robot {} but it already has a higher level", player.player_name, level, robot_id);
+                                    error!("Player {} tried to buy energy regen upgrade {:?} for robot {} but it already has a higher level {:?}", player.player_name, level, robot_id, robot.levels.energy_regen_level);
                                 }
                             }
                             UpgradeType::Damage => {
                                 if robot.levels.damage_level < level {
                                     robot.levels.damage_level = level;
                                 } else {
-                                    error!("Player {} tried to buy damage upgrade {:?} for robot {} but it already has a higher level", player.player_name, level, robot_id);
+                                    error!("Player {} tried to buy damage upgrade {:?} for robot {} but it already has a higher level {:?}", player.player_name, level, robot_id, robot.levels.damage_level);
                                 }
                             }
                             UpgradeType::Mining => {
                                 if robot.levels.mining_level < level {
                                     robot.levels.mining_level = level;
                                 } else {
-                                    error!("Player {} tried to buy mining upgrade {:?} for robot {} but it already has a higher level", player.player_name, level, robot_id);
+                                    error!("Player {} tried to buy mining upgrade {:?} for robot {} but it already has a higher level {:?}", player.player_name, level, robot_id, robot.levels.mining_level);
                                 }
                             }
                             UpgradeType::MiningSpeed => {
                                 if robot.levels.mining_speed_level < level {
                                     robot.levels.mining_speed_level = level;
                                 } else {
-                                    error!("Player {} tried to buy mining speed upgrade {:?} for robot {} but it already has a higher level", player.player_name, level, robot_id);
+                                    error!("Player {} tried to buy mining speed upgrade {:?} for robot {} but it already has a higher level {:?}", player.player_name, level, robot_id, robot.levels.mining_speed_level);
                                 }
                             }
                             UpgradeType::Storage => {
                                 if robot.levels.storage_level < level {
                                     robot.levels.storage_level = level;
                                 } else {
-                                    error!("Player {} tried to buy storage upgrade {:?} for robot {} but it already has a higher level", player.player_name, level, robot_id);
+                                    error!("Player {} tried to buy storage upgrade {:?} for robot {} but it already has a higher level {:?}", player.player_name, level, robot_id, robot.levels.storage_level);
                                 }
                             }
                         }
@@ -103,7 +104,7 @@ pub fn handle_buy_commands(game_state: &mut GameState, spawn_robots: bool) {
                         match item {
                             Item::Robot(amount) => {
                                 if !spawn_robots{
-                                    info!("Skipping to spawn robots, because we are 'hypothetically' transforming the state");
+                                    //debug!("Skipping to spawn robots, because we are 'hypothetically' transforming the state");
                                     continue
                                 }
                                 //choose random planet which is not empty on map and spawn robot there

@@ -1,5 +1,6 @@
+use rayon::prelude::IntoParallelRefMutIterator;
 use tracing::error;
-use tracing::log::info;
+use tracing::log::{debug, info};
 use uuid::Uuid;
 
 use crate::game::game_state::GameState;
@@ -71,7 +72,7 @@ pub fn apply_damage_for_round(damage_reports: Vec<DamageReport>, game_state: &mu
                     }
                     target_robot.take_damage(damage_report.damage_to_take);
                     if !target_robot.is_alive() {
-                        info!("Robot {} of player {} was killed by {} {}", damage_report.defender_id, target_player_name, damage_report.attacker_name, damage_report.attacker_id);
+                        debug!("Robot {} of player {} was killed by {} {}", damage_report.defender_id, target_player_name, damage_report.attacker_name, damage_report.attacker_id);
                         let kill_report = KillReport {
                             attacker_name: damage_report.attacker_name.clone(),
                             attacker_robot_id: damage_report.attacker_id,
@@ -111,18 +112,14 @@ pub fn delete_commands_for_dead_robots(game_state: &mut GameState) {
 
     for player in player_states.values_mut() {
         let players_robots = &mut player.robots;
-        //clear mining and regenerating commands for dead robots
+        //clear mining and regenerating commands for dead robots, in case they had such commands
         for (robot_id, robot) in players_robots.iter_mut() {
             if !robot.is_alive() {
                 if let Some(mining_commands) = player.commands.get_mut(&CommandType::MINING) {
                     mining_commands.retain(|command| command.command_object.robot_id.unwrap() != *robot_id);
-                } else {
-                    error!("Mining commands are required");
                 }
                 if let Some(regenerating_commands) = player.commands.get_mut(&CommandType::REGENERATE) {
                     regenerating_commands.retain(|command| command.command_object.robot_id.unwrap() != *robot_id);
-                } else {
-                    error!("Regenerating commands are required");
                 }
             }
         }
