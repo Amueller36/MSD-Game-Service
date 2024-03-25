@@ -35,8 +35,8 @@ async fn main() -> Result<(),std::io::Error>{
     let client = mobc_redis::redis::Client::open(format!("redis://{}:{}",redis_host,redis_port)).expect("Invalid redis url");
     let pool_manager = RedisConnectionManager::new(client);
     let pool = mobc::Pool::builder()
-        .max_open(50)
-        .max_idle(10)
+        .max_open(10)
+        .max_idle(5)
         .build(pool_manager);
     let pool_as_sharable_data = Data::new(pool);
     HttpServer::new(move || {
@@ -52,4 +52,6 @@ async fn main() -> Result<(),std::io::Error>{
         .expect("Failed to bind to port")
         .run()
         .await
+
+
 }

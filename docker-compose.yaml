@@ -4,7 +4,6 @@ services:
     ports:
       - "6379:6379"
     volumes:
-      - redis_data:/data
       - ./redis.conf:/usr/local/etc/redis/redis.conf
       - ./redis.conf:/etc/keydb/keydb.conf
     command: keydb-server /usr/local/etc/redis/redis.conf #switch to redis-server for redis
@@ -20,15 +19,12 @@ services:
     environment:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
-      - RUST_LOG=INFO
+      - RUST_LOG=ERROR
   map:
     build:
-        context: ../map-for-andre
+        context: ../map
         dockerfile: Dockerfile
     ports:
       - "4200:80"
     environment:
       - NODE_ENV=production
-
-volumes:
-  redis_data:

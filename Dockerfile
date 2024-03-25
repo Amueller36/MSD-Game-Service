@@ -4,9 +4,7 @@ FROM rust:alpine as builder
 
 WORKDIR /usr/src/game
 
-RUN USER=root
-
-RUN apk add --no-cache openssl-dev build-base
+RUN USER=root && apk add --no-cache openssl-dev build-base
 
 COPY . .
 
